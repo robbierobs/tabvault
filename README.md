@@ -13,6 +13,8 @@ Load your Guitar Pro files, play them back with MIDI, loop sections with draggab
 - Draggable loop region — click and drag handles on the timeline to set loop points
 - Speed control — presets from 50-100%, manual input up to 200%
 - Speed ramp — auto-increases tempo each loop for progressive practice
+- Tuning display — the current tuning (e.g. Drop D) shown in the header
+- Play in any tuning — re-finger the tab for your tuning (same sound), or shift the audio pitch to your tuning (same tab); never modifies the file
 - Track selector — switch which track's notation is displayed (drums excluded automatically)
 - Per-track mixer — volume, mute, and solo per instrument
 - Metronome and count-in
@@ -109,6 +111,14 @@ Metadata (title, artist) is extracted automatically on upload. Click the pencil 
 4. Speed increases automatically each loop restart until the target is reached
 5. Click **Step now** to advance manually at any time
 
+
+### Playing in a Different Tuning
+The song's tuning is shown as a badge in the header. Click the **Tuning** button (tuning fork icon) and pick the tuning you want to play in, then choose a mode:
+
+- **Re-finger tabs** — the song sounds exactly like the original, but fret numbers are rewritten for your tuning (e.g. an E Standard song re-fingered for Drop D). If some notes can't be reached in the chosen tuning you'll see a warning with a count of clamped notes.
+- **Shift pitch** — the tab stays exactly as written, but all audio (every track, including bass) moves to your tuning (e.g. hear a Drop C song in Drop D so you can play along without retuning).
+
+Both are playback-only: the file on disk is never modified, and **Reset to original** puts everything back instantly.
 
 ### Track Mixer
 - Use sliders on the right panel to balance track volumes

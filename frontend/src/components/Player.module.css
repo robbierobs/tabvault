@@ -54,6 +54,12 @@
   border-radius: 10px;
 }
 
+.badgeAccent {
+  color: var(--accent);
+  background: var(--accent-glow);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 .headerRight {
   display: flex;
   align-items: center;

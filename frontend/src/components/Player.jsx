@@ -3,6 +3,8 @@ import styles from './Player.module.css';
 import TrackMixer from './TrackMixer.jsx';
 import PlaybackControls from './PlaybackControls.jsx';
 import LoopBar from './LoopBar.jsx';
+import TuningControls from './TuningControls.jsx';
+import { tuningLabel, refingerScore, shiftScorePitch, semitoneShift } from '../lib/tuning.js';
 
 const TRACK_COLORS = [
   '#e8673a', '#4a9eff', '#3acd7e', '#e8c13a',
@@ -38,8 +40,29 @@ export default function Player({ file, onMetaLoaded }) {
   const [scoreArtist, setScoreArtist] = useState('');
   const [timeSignature, setTimeSignature] = useState('');
   const [tempo, setTempo] = useState(null);
+
+  // Tuning feature: raw file bytes are kept so transforms can re-parse a
+  // pristine score instead of mutating the loaded one back and forth.
+  const atRef = useRef(null);            // alphaTab module
+  const bytesRef = useRef(null);         // original file bytes
+  const origTuningsRef = useRef({});     // track index -> tuning array from the file
+  const reapplyMixerRef = useRef(false); // true while re-rendering for a tuning change
+  const tracksRef = useRef([]);
+  const [trackTunings, setTrackTunings] = useState({}); // current (possibly transformed)
+  const [tuningTarget, setTuningTarget] = useState(null);
+  const [tuningMode, setTuningMode] = useState('refinger');
+  const [tuningOutOfRange, setTuningOutOfRange] = useState(0);
+
+  useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+
+  // Guards against overlapping async inits (React 18 StrictMode double-mounts
+  // the effect; without this two live AlphaTabApi instances render into the
+  // same container and the stale one covers the real one)
+  const initGenRef = useRef(0);
+
   const initAlphaTab = useCallback(async () => {
     if (!containerRef.current) return;
+    const gen = ++initGenRef.current;
     setLoading(true);
     setError(null);
 
@@ -47,6 +70,7 @@ export default function Player({ file, onMetaLoaded }) {
       // Handle all possible export shapes from alphaTab
       const mod = await import('@coderline/alphatab');
       const at = mod.alphaTab ?? mod.default ?? mod;
+      atRef.current = at;
 
       const LayoutMode = at.LayoutMode ?? { Page: 0, Horizontal: 1 };
       const StaveProfile = at.StaveProfile ?? { Tab: 1 };
@@ -89,6 +113,11 @@ export default function Player({ file, onMetaLoaded }) {
 
       console.log('AlphaTabApi found:', !!AlphaTabApi);
       const api = new AlphaTabApi(containerRef.current, settings);
+      if (gen !== initGenRef.current) {
+        // Effect was cleaned up (or re-run) while we were initializing
+        try { api.destroy(); } catch (e) {}
+        return;
+      }
       console.log('API created:', !!api);
       apiRef.current = api;
 
@@ -172,6 +201,32 @@ export default function Player({ file, onMetaLoaded }) {
           setTempo(mb.tempo);
         }
 
+        // Capture each track's tuning (first stringed staff) for the header
+        // badge and the tuning controls
+        const tunings = {};
+        (score.tracks || []).forEach((t, i) => {
+          const staff = (t.staves || []).find(s => !s.isPercussion && s.stringTuning?.tunings?.length);
+          tunings[i] = staff ? [...staff.stringTuning.tunings] : null;
+        });
+        setTrackTunings(tunings);
+        if (!reapplyMixerRef.current) {
+          origTuningsRef.current = tunings;
+        }
+
+        // A tuning change re-renders the score; keep the mixer state instead
+        // of rebuilding it, and push it back onto the fresh score
+        if (reapplyMixerRef.current) {
+          reapplyMixerRef.current = false;
+          for (const t of tracksRef.current) {
+            const tr = score.tracks?.[t.id];
+            if (!tr) continue;
+            if (t.volume !== 100) api.changeTrackVolume([tr], t.volume / 100);
+            if (t.muted) api.changeTrackMute([tr], true);
+            if (t.solo) api.changeTrackSolo([tr], true);
+          }
+          return;
+        }
+
         const sanitizeName = (name, i) => {
           if (!name) return `Track ${i + 1}`;
           // Remove replacement characters and non-printable chars
@@ -199,9 +254,15 @@ export default function Player({ file, onMetaLoaded }) {
         setLoading(false);
       });
 
+      // Load via raw bytes (rather than URL) so tuning changes can re-parse
+      // a pristine copy of the score
       const url = `/api/file/${encodeURIComponent(file.name)}`;
       console.log('Loading URL:', url);
-      api.load(url);
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`Failed to fetch file (${resp.status})`);
+      if (gen !== initGenRef.current) return; // unmounted while fetching
+      bytesRef.current = new Uint8Array(await resp.arrayBuffer());
+      api.load(bytesRef.current);
 
     } catch (e) {
       console.error('Init error', e);
@@ -213,11 +274,11 @@ export default function Player({ file, onMetaLoaded }) {
   useEffect(() => {
     initAlphaTab();
     return () => {
+      initGenRef.current++; // invalidate any in-flight init
       if (apiRef.current) {
         try { apiRef.current.destroy(); } catch (e) {}
         apiRef.current = null;
       }
-      try { cursorObserver?.disconnect(); } catch(e) {}
     };
   }, [initAlphaTab]);
 
@@ -294,6 +355,50 @@ export default function Player({ file, onMetaLoaded }) {
     });
   };
 
+  // Apply (or clear) a temporary tuning change. Re-parses the original file
+  // bytes, transforms the fresh score, and re-renders — the file on disk is
+  // never touched.
+  const applyTuning = (target, mode) => {
+    const api = apiRef.current;
+    const at = atRef.current;
+    if (!api || !at || !bytesRef.current) return;
+
+    setTuningTarget(target);
+    setTuningMode(mode);
+
+    try { api.stop(); } catch (e) {}
+
+    let score;
+    try {
+      score = at.importer.ScoreLoader.loadScoreFromBytes(bytesRef.current, api.settings);
+    } catch (e) {
+      console.error('Tuning re-parse failed', e);
+      return;
+    }
+
+    let outOfRange = 0;
+    const refTuning = origTuningsRef.current[visibleTrack];
+    if (target && refTuning) {
+      if (mode === 'refinger') {
+        outOfRange = refingerScore(score, refTuning, target.tunings).outOfRange;
+      } else {
+        shiftScorePitch(score, semitoneShift(refTuning, target.tunings));
+      }
+    }
+    setTuningOutOfRange(outOfRange);
+
+    reapplyMixerRef.current = true;
+    api.renderScore(score, [visibleTrack]);
+
+    // Restore the loop region on the re-rendered score (same bar structure,
+    // so the old tick math still holds)
+    if (loopEnabled && totalTicks > 0 && totalBars > 0) {
+      const startTick = Math.floor((loopStart / totalBars) * totalTicks);
+      const endTick = Math.floor((loopEnd / totalBars) * totalTicks);
+      api.playbackRange = { startTick, endTick };
+    }
+  };
+
   const handleVisibleTrack = (trackId) => {
     setVisibleTrack(trackId);
     if (apiRef.current?.score?.tracks?.[trackId]) {
@@ -315,6 +420,11 @@ export default function Player({ file, onMetaLoaded }) {
 
   const progress = totalTicks > 0 ? currentTick / totalTicks : 0;
 
+  const currentTuning = trackTunings[visibleTrack];
+  const originalTuning = origTuningsRef.current[visibleTrack];
+  const currentTuningLabel = tuningLabel(currentTuning);
+  const originalTuningLabel = tuningLabel(originalTuning);
+
   return (
     <div className={styles.player}>
       <div className={styles.header}>
@@ -325,9 +435,28 @@ export default function Player({ file, onMetaLoaded }) {
             {tempo && <span className={styles.badge}>{tempo} BPM</span>}
             {timeSignature && <span className={styles.badge}>{timeSignature}</span>}
             {totalBars > 0 && <span className={styles.badge}>{totalBars} bars</span>}
+            {currentTuningLabel && (
+              <span
+                className={`${styles.badge} ${tuningTarget ? styles.badgeAccent : ''}`}
+                title={tuningTarget
+                  ? `Tuning (file is in ${originalTuningLabel})`
+                  : `Tuning: ${currentTuningLabel}`}
+              >
+                {currentTuningLabel}
+              </span>
+            )}
           </div>
         </div>
         <div className={styles.headerRight}>
+          <TuningControls
+            originalTunings={originalTuning}
+            originalLabel={originalTuningLabel}
+            currentLabel={currentTuningLabel}
+            target={tuningTarget}
+            mode={tuningMode}
+            outOfRange={tuningOutOfRange}
+            onApply={applyTuning}
+          />
           {tracks.length > 1 && (
             <select
               style={{

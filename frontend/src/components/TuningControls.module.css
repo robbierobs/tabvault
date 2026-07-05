@@ -1,0 +1,150 @@
+.wrap {
+  position: relative;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--text3);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  color: var(--text);
+  border-color: var(--border2);
+}
+
+.btnActive {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 300px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 12px;
+  z-index: 100;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rowLabel {
+  font-size: 11px;
+  color: var(--text2);
+  flex-shrink: 0;
+}
+
+.select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.mode:hover {
+  border-color: var(--border2);
+}
+
+.mode input {
+  accent-color: var(--accent);
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.mode:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.modeText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.modeText strong {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.modeText span {
+  font-size: 11px;
+  color: var(--text2);
+  line-height: 1.35;
+}
+
+.warn {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--yellow);
+  background: rgba(232, 193, 58, 0.08);
+  border: 1px solid rgba(232, 193, 58, 0.25);
+  border-radius: 7px;
+  padding: 7px 9px;
+}
+
+.reset {
+  font-size: 11px;
+  color: var(--text2);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 6px;
+  transition: all 0.15s;
+}
+
+.reset:hover {
+  color: var(--text);
+  border-color: var(--border2);
+}
+
+.hint {
+  font-size: 10px;
+  color: var(--text3);
+  line-height: 1.4;
+}
