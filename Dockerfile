@@ -11,6 +11,10 @@ RUN npm run build
 # ── Stage 2: Production image ─────────────────────────────────────────────────
 FROM node:20-alpine
 
+LABEL org.opencontainers.image.source="https://github.com/robbierobs/tabvault" \
+      org.opencontainers.image.description="Self-hosted Guitar Pro file player" \
+      org.opencontainers.image.licenses="MIT"
+
 WORKDIR /app
 
 # Install backend deps
