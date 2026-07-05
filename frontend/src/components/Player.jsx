@@ -65,6 +65,8 @@ export default function Player({ file, onMetaLoaded }) {
   });
   const [soundLoading, setSoundLoading] = useState(false);
 
+  const soundfontSwapRef = useRef(null); // {wasPlaying} while a user-initiated soundfont swap is in flight
+
   // A/V sync: positive = cursor/UI delayed (audio arrives late, e.g.
   // Bluetooth), negative = cursor runs ahead
   const [avSync, setAvSync] = useState(loadAvSync);
@@ -200,7 +202,26 @@ export default function Player({ file, onMetaLoaded }) {
         setLoading(false);
       });
 
-      api.soundFontLoaded.on(() => setSoundLoading(false));
+      api.soundFontLoaded.on(() => {
+        setSoundLoading(false);
+        // After a soundfont swap the synth channels still hold preset indexes
+        // resolved against the OLD font's preset ordering (alphaSynth only
+        // re-resolves them when program-change events are processed, which a
+        // paused seek skips). Rewind the sequencer and restore the position so
+        // the channel setup replays against the new presets.
+        const swap = soundfontSwapRef.current;
+        if (swap) {
+          soundfontSwapRef.current = null;
+          const pos = api.tickPosition;
+          try {
+            api.stop();
+            if (pos > 0) api.tickPosition = pos;
+            // wasPlaying was captured at toggle time — the synth pauses itself
+            // while loading, so playingRef is already false by now
+            if (swap.wasPlaying) api.play();
+          } catch (e) {}
+        }
+      });
 
       api.playerStateChanged.on((e) => {
         const isPlaying = e.state === 1;
@@ -484,6 +505,7 @@ export default function Player({ file, onMetaLoaded }) {
     try { localStorage.setItem(HQ_SOUND_KEY, next ? '1' : '0'); } catch (e) {}
     if (apiRef.current) {
       setSoundLoading(true);
+      soundfontSwapRef.current = { wasPlaying: playingRef.current };
       apiRef.current.loadSoundFontFromUrl(next ? SOUNDFONTS.hq : SOUNDFONTS.standard, false);
     }
   };
