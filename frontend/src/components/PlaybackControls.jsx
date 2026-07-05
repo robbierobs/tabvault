@@ -1,14 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import styles from './PlaybackControls.module.css';
 
 const SPEED_PRESETS = [50, 60, 70, 75, 80, 85, 90, 95, 100];
 
 export default function PlaybackControls({
-  playing, ready, speed, onPlayPause, onStop, onSpeedChange, progress, currentBar, totalBars, loopCount
+  playing, ready, speed, onPlayPause, onStop, onSpeedChange, progress, currentBar, totalBars, loopCount,
+  rampEnabled, rampTarget, rampStep, onRampEnabled, onRampTarget, onRampStep,
 }) {
-  const [rampEnabled, setRampEnabled] = useState(false);
-  const [rampTarget, setRampTarget] = useState(100);
-  const [rampStep, setRampStep] = useState(5);
   const prevLoopCount = useRef(loopCount);
 
   // Auto-trigger speed ramp when loop restarts
@@ -115,7 +113,7 @@ export default function PlaybackControls({
         <div className={styles.rampHeader}>
           <button
             className={`${styles.rampToggle} ${rampEnabled ? styles.rampActive : ''}`}
-            onClick={() => setRampEnabled(r => !r)}
+            onClick={() => onRampEnabled(!rampEnabled)}
             title="Auto-speed ramp: increases speed each loop"
           >
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -135,7 +133,7 @@ export default function PlaybackControls({
                 min="1"
                 max="25"
                 value={rampStep}
-                onChange={e => setRampStep(parseInt(e.target.value) || 5)}
+                onChange={e => onRampStep(parseInt(e.target.value) || 5)}
               />
               <span>% per loop →</span>
               <input
@@ -144,7 +142,7 @@ export default function PlaybackControls({
                 min="50"
                 max="200"
                 value={rampTarget}
-                onChange={e => setRampTarget(parseInt(e.target.value) || 100)}
+                onChange={e => onRampTarget(parseInt(e.target.value) || 100)}
               />
               <span>%</span>
             </label>

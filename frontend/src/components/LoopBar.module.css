@@ -61,6 +61,7 @@
   border-bottom: 1.5px solid var(--green);
   cursor: grab;
   z-index: 1;
+  touch-action: none; /* let pointer drags own the gesture on touch screens */
 }
 
 .loopRegion:active {
@@ -113,6 +114,17 @@
   z-index: 4;
   cursor: ew-resize;
   transform: translateX(-1.5px);
+  touch-action: none;
+}
+
+/* invisible widened hit area so the 3px handles are grabbable with a finger */
+.handle::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: -9px;
+  right: -9px;
 }
 
 .handleStart {

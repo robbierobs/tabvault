@@ -3,7 +3,7 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { extractGPMeta } = require('./gpMeta');
+const { extractGPMeta, META_VERSION } = require('./gpMeta');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -17,25 +17,32 @@ if (!fs.existsSync(LIBRARY_PATH)) {
   fs.mkdirSync(LIBRARY_PATH, { recursive: true });
 }
 
-// Read or generate metadata sidecar for a file
+// Read or generate metadata sidecar for a file. Sidecars older than
+// META_VERSION are re-extracted (adds tuning etc.) while keeping any
+// manually edited title/artist/album.
 function getFileMeta(filename) {
   const metaPath = path.join(LIBRARY_PATH, filename + '.meta.json');
+  let existing = null;
   if (fs.existsSync(metaPath)) {
     try {
-      return JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      existing = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     } catch (e) {}
+    if (existing && existing.v >= META_VERSION) return existing;
   }
 
-  // Parse and cache
   const filePath = path.join(LIBRARY_PATH, filename);
-  const meta = extractGPMeta(filePath);
-  if (meta) {
-    try {
-      fs.writeFileSync(metaPath, JSON.stringify(meta));
-    } catch (e) {}
-    return meta;
+  const meta = extractGPMeta(filePath)
+    || { v: META_VERSION, title: '', artist: '', album: '', tuning: null, trackCount: 0 };
+  if (existing) {
+    // older sidecars may carry manual edits — those win over re-extraction
+    if (existing.title) meta.title = existing.title;
+    if (existing.artist) meta.artist = existing.artist;
+    if (existing.album) meta.album = existing.album;
   }
-  return { title: '', artist: '', album: '' };
+  try {
+    fs.writeFileSync(metaPath, JSON.stringify(meta));
+  } catch (e) {}
+  return meta;
 }
 
 // Scan all files on startup and generate missing meta
@@ -148,6 +155,8 @@ app.get('/api/library', (req, res) => {
           title: meta.title || '',
           artist: meta.artist || '',
           album: meta.album || '',
+          tuning: meta.tuning || null,
+          trackCount: meta.trackCount || 0,
         };
       })
       .sort((a, b) => {
@@ -202,7 +211,11 @@ app.post('/api/meta/:filename', (req, res) => {
     return res.status(404).json({ error: 'File not found' });
   }
   const { title, artist, album } = req.body;
-  const meta = { title: title || '', artist: artist || '', album: album || '' };
+  // merge into the existing sidecar so extracted fields (tuning, ...) survive
+  const meta = getFileMeta(req.params.filename);
+  meta.title = title || '';
+  meta.artist = artist || '';
+  if (album !== undefined) meta.album = album || '';
   const metaPath = filePath + '.meta.json';
   fs.writeFileSync(metaPath, JSON.stringify(meta));
   res.json(meta);

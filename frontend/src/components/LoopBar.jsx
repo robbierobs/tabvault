@@ -1,7 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import styles from './LoopBar.module.css';
 
-export default function LoopBar({ enabled, onToggle, start, end, total, currentBar, progress, onRangeChange }) {
+export default function LoopBar({ enabled, onToggle, start, end, total, currentBar, progress, onRangeChange, onRangeCommit }) {
   const trackRef = useRef(null);
   const [dragging, setDragging] = useState(null); // 'start' | 'end' | 'range'
   const [dragOffset, setDragOffset] = useState(0);
@@ -48,14 +48,22 @@ export default function LoopBar({ enabled, onToggle, start, end, total, currentB
         onRangeChange(ns, ne);
       }
     };
-    const onUp = () => setDragging(null);
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+    const onUp = () => {
+      setDragging(null);
+      // commit once on release — live playbackRange updates during the drag
+      // would spam the synth with seeks
+      if (onRangeCommit) onRangeCommit(localStart.current, localEnd.current);
     };
-  }, [dragging, dragOffset, total, getBarFromX, onRangeChange]);
+    // pointer events cover mouse, touch, and pen
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, [dragging, dragOffset, total, getBarFromX, onRangeChange, onRangeCommit]);
 
   const startPct = total > 0 ? (start / total) * 100 : 0;
   const endPct = total > 0 ? (end / total) * 100 : 100;
@@ -81,7 +89,7 @@ export default function LoopBar({ enabled, onToggle, start, end, total, currentB
           <div
             className={styles.loopRegion}
             style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }}
-            onMouseDown={(e) => startDrag(e, 'range')}
+            onPointerDown={(e) => startDrag(e, 'range')}
           />
         )}
 
@@ -113,7 +121,7 @@ export default function LoopBar({ enabled, onToggle, start, end, total, currentB
             <div
               className={`${styles.handle} ${styles.handleStart}`}
               style={{ left: `${startPct}%` }}
-              onMouseDown={(e) => startDrag(e, 'start')}
+              onPointerDown={(e) => startDrag(e, 'start')}
               title={`Loop start: bar ${start + 1}`}
             >
               <div className={styles.handleLabel}>{start + 1}</div>
@@ -121,7 +129,7 @@ export default function LoopBar({ enabled, onToggle, start, end, total, currentB
             <div
               className={`${styles.handle} ${styles.handleEnd}`}
               style={{ left: `${endPct}%` }}
-              onMouseDown={(e) => startDrag(e, 'end')}
+              onPointerDown={(e) => startDrag(e, 'end')}
               title={`Loop end: bar ${end}`}
             >
               <div className={styles.handleLabelEnd}>{end}</div>

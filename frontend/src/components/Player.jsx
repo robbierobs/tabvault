@@ -7,6 +7,7 @@ import TuningControls from './TuningControls.jsx';
 import AvSyncControls from './AvSyncControls.jsx';
 import { tuningLabel, refingerScore, shiftScorePitch, semitoneShift } from '../lib/tuning.js';
 import { createSyncedCursorHandler, loadAvSync, saveAvSync } from '../lib/avSync.js';
+import { loadSongState, saveSongState } from '../lib/songState.js';
 
 const TRACK_COLORS = [
   '#e8673a', '#4a9eff', '#3acd7e', '#e8c13a',
@@ -29,6 +30,9 @@ export default function Player({ file, onMetaLoaded }) {
   const [currentBar, setCurrentBar] = useState(0);
   const [totalBars, setTotalBars] = useState(0);
   const [speed, setSpeed] = useState(100);
+  const [rampEnabled, setRampEnabled] = useState(false);
+  const [rampTarget, setRampTarget] = useState(100);
+  const [rampStep, setRampStep] = useState(5);
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [loopStart, setLoopStart] = useState(0);
   const [loopEnd, setLoopEnd] = useState(100);
@@ -38,11 +42,12 @@ export default function Player({ file, onMetaLoaded }) {
   const [countIn, setCountIn] = useState(false);
   const [metronome, setMetronome] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [cursorX, setCursorX] = useState(-1);
   const [loopCount, setLoopCount] = useState(0);
-  const lastBarRef = React.useRef(0);
-  const [cursorY, setCursorY] = useState(0);
-  const [cursorH, setCursorH] = useState(0);
+  const lastTickRef = useRef(0);
+  const loopEnabledRef = useRef(false);
+  const loopRangeTicksRef = useRef(null); // {startTick, endTick} of the active loop region
+  const readyRef = useRef(false);
+  const pendingLoopRangeRef = useRef(null); // loop bars waiting for playerReady
   const [error, setError] = useState(null);
   const [scoreTitle, setScoreTitle] = useState('');
   const [scoreArtist, setScoreArtist] = useState('');
@@ -198,8 +203,30 @@ export default function Player({ file, onMetaLoaded }) {
 
       api.playerReady.on(() => {
         console.log('Player ready!');
+        readyRef.current = true;
         setReady(true);
         setLoading(false);
+        const pending = pendingLoopRangeRef.current;
+        if (pending) {
+          pendingLoopRangeRef.current = null;
+          applyLoopRangeRef.current?.(pending.start, pending.end);
+        }
+      });
+
+      // (lives on the synth, not the api facade)
+      api.player?.soundFontLoadFailed?.on((err) => {
+        console.error('Soundfont load failed', err);
+        setSoundLoading(false);
+        const failedSwap = soundfontSwapRef.current;
+        soundfontSwapRef.current = null;
+        // the synth still has the previous font — flip the toggle back
+        if (failedSwap) {
+          setHqSound(h => {
+            const reverted = !h;
+            try { localStorage.setItem(HQ_SOUND_KEY, reverted ? '1' : '0'); } catch (e2) {}
+            return reverted;
+          });
+        }
       });
 
       api.soundFontLoaded.on(() => {
@@ -246,22 +273,20 @@ export default function Player({ file, onMetaLoaded }) {
           setCurrentTick(e.currentTick);
           setTotalTicks(e.endTick);
         });
-        // Detect loop restart by tick jumping backwards (not delayed — the
-        // speed ramp should trigger at the actual restart)
-        if (e.currentTick < lastBarRef.current - 1000) {
-          setLoopCount(c => c + 1);
-        }
-        lastBarRef.current = e.currentTick;
-
-        // Update custom cursor position
-        if (e.currentBeat) {
-          const bounds = e.currentBeat.bounds;
-          if (bounds) {
-            setCursorX(bounds.x);
-            setCursorY(bounds.y);
-            setCursorH(bounds.h);
+        // Loop-wrap detection for the speed ramp (not delayed — the ramp
+        // should trigger at the actual restart). Only count backward jumps
+        // that leave from near the loop end and land near the loop start,
+        // so manual rewinds/seeks don't bump the tempo.
+        if (e.currentTick < lastTickRef.current - 1000 && loopEnabledRef.current) {
+          const range = loopRangeTicksRef.current;
+          const startTick = range ? range.startTick : 0;
+          const endTick = range ? range.endTick : e.endTick;
+          const margin = Math.max(1000, (endTick - startTick) * 0.1);
+          if (e.currentTick <= startTick + margin && lastTickRef.current >= endTick - margin) {
+            setLoopCount(c => c + 1);
           }
         }
+        lastTickRef.current = e.currentTick;
       });
 
       api.scoreLoaded.on((score) => {
@@ -325,6 +350,9 @@ export default function Player({ file, onMetaLoaded }) {
           isDrum: t.isPercussion || (t.playbackInfo && t.playbackInfo.program === 0 && t.playbackInfo.primaryChannel === 9),
         }));
         setTracks(trackList);
+
+        // Initial load complete — bring back this song's saved practice state
+        restoreStateRef.current?.(api);
       });
 
       api.error.on((e) => {
@@ -375,16 +403,7 @@ export default function Player({ file, onMetaLoaded }) {
 
   const togglePlay = () => {
     if (!apiRef.current) return;
-    // Resume suspended audio context on user gesture
-    if (window.AudioContext || window.webkitAudioContext) {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx.prototype && apiRef.current.context) {
-        apiRef.current.context.resume?.();
-      }
-      // Also try resuming any suspended context globally
-      const ctx = new AudioCtx();
-      if (ctx.state === 'suspended') ctx.resume();
-    }
+    // alphaTab resumes its own suspended AudioContext on play (user gesture)
     apiRef.current.playPause();
   };
   const stop = () => { if (apiRef.current) { apiRef.current.stop(); setPlaying(false); } };
@@ -399,20 +418,62 @@ export default function Player({ file, onMetaLoaded }) {
     if (apiRef.current) apiRef.current.masterVolume = val / 100;
   };
 
+  // Exact tick position where a bar starts (bar index == masterBars.length
+  // means "end of song"). Precise even with tempo/time-signature changes.
+  const barStartTick = (barIdx) => {
+    const mbs = apiRef.current?.score?.masterBars;
+    if (!mbs || mbs.length === 0) return null;
+    if (barIdx >= mbs.length) {
+      const last = mbs[mbs.length - 1];
+      return last.start + last.calculateDuration();
+    }
+    return mbs[Math.max(0, barIdx)].start;
+  };
+
+  const applyLoopRange = (start, end) => {
+    const api = apiRef.current;
+    if (!api) return;
+    // Setting playbackRange before the player ever started throws inside
+    // alphaTab's audio output — defer until playerReady
+    if (!readyRef.current) {
+      pendingLoopRangeRef.current = { start, end };
+      return;
+    }
+    const startTick = barStartTick(start);
+    const endTick = barStartTick(end);
+    if (startTick === null || endTick === null || endTick <= startTick) return;
+    api.playbackRange = { startTick, endTick };
+    loopRangeTicksRef.current = { startTick, endTick };
+  };
+  const applyLoopRangeRef = useRef(null);
+  applyLoopRangeRef.current = applyLoopRange;
+
   const handleLoopToggle = () => {
     const next = !loopEnabled;
     setLoopEnabled(next);
-    if (apiRef.current) apiRef.current.isLooping = next;
+    loopEnabledRef.current = next;
+    if (apiRef.current) {
+      apiRef.current.isLooping = next;
+      if (next) {
+        applyLoopRange(loopStart, loopEnd);
+      } else {
+        // release the range so normal playback covers the whole song again
+        apiRef.current.playbackRange = null;
+        loopRangeTicksRef.current = null;
+      }
+    }
   };
 
+  // live during drags: UI state only; the playback range is applied on commit
   const handleLoopRange = (start, end) => {
     setLoopStart(start);
     setLoopEnd(end);
-    if (apiRef.current && totalTicks > 0 && totalBars > 0) {
-      const startTick = Math.floor((start / totalBars) * totalTicks);
-      const endTick = Math.floor((end / totalBars) * totalTicks);
-      apiRef.current.playbackRange = { startTick, endTick };
-    }
+  };
+
+  const handleLoopRangeCommit = (start, end) => {
+    setLoopStart(start);
+    setLoopEnd(end);
+    applyLoopRange(start, end);
   };
 
   const handleTrackVolume = (trackId, vol) => {
@@ -449,7 +510,7 @@ export default function Player({ file, onMetaLoaded }) {
   // Apply (or clear) a temporary tuning change. Re-parses the original file
   // bytes, transforms the fresh score, and re-renders — the file on disk is
   // never touched.
-  const applyTuning = (target, mode) => {
+  const applyTuning = (target, mode, trackIdx = visibleTrack) => {
     const api = apiRef.current;
     const at = atRef.current;
     if (!api || !at || !bytesRef.current) return;
@@ -468,7 +529,7 @@ export default function Player({ file, onMetaLoaded }) {
     }
 
     let outOfRange = 0;
-    const refTuning = origTuningsRef.current[visibleTrack];
+    const refTuning = origTuningsRef.current[trackIdx];
     if (target && refTuning) {
       if (mode === 'refinger') {
         outOfRange = refingerScore(score, refTuning, target.tunings).outOfRange;
@@ -479,16 +540,95 @@ export default function Player({ file, onMetaLoaded }) {
     setTuningOutOfRange(outOfRange);
 
     reapplyMixerRef.current = true;
-    api.renderScore(score, [visibleTrack]);
+    api.renderScore(score, [trackIdx]);
 
     // Restore the loop region on the re-rendered score (same bar structure,
-    // so the old tick math still holds)
-    if (loopEnabled && totalTicks > 0 && totalBars > 0) {
-      const startTick = Math.floor((loopStart / totalBars) * totalTicks);
-      const endTick = Math.floor((loopEnd / totalBars) * totalTicks);
-      api.playbackRange = { startTick, endTick };
+    // so the same bar indexes apply)
+    if (loopEnabled) {
+      applyLoopRange(loopStart, loopEnd);
     }
   };
+
+  // Restore saved practice state for this song. Called from scoreLoaded via a
+  // ref so it always uses the current render's handlers.
+  const restoredRef = useRef(false);
+  const restoreStateRef = useRef(null);
+  restoreStateRef.current = (api) => {
+    const saved = loadSongState(file.name);
+    if (!saved) { restoredRef.current = true; return; }
+    try {
+      if (saved.speed && saved.speed !== 100) handleSpeedChange(saved.speed);
+      if (saved.ramp) {
+        setRampEnabled(!!saved.ramp.enabled);
+        setRampStep(saved.ramp.step || 5);
+        setRampTarget(saved.ramp.target || 100);
+      }
+
+      const vt = saved.visibleTrack ?? 0;
+      const hasTrack = !!api.score?.tracks?.[vt];
+      if (saved.tuning?.tunings && hasTrack) {
+        setVisibleTrack(vt);
+        applyTuning(
+          { name: saved.tuning.name, tunings: saved.tuning.tunings, custom: !!saved.tuning.custom },
+          saved.tuning.mode || 'refinger',
+          vt
+        );
+      } else if (vt !== 0 && hasTrack) {
+        setVisibleTrack(vt);
+        api.renderTracks([api.score.tracks[vt]]);
+      }
+
+      // mixer (applies to the possibly re-rendered score — api.score is current)
+      if (Array.isArray(saved.tracks)) {
+        setTracks(list => list.map((t, i) => saved.tracks[i] ? { ...t, ...saved.tracks[i] } : t));
+        saved.tracks.forEach((s, i) => {
+          const tr = api.score?.tracks?.[i];
+          if (!s || !tr) return;
+          if (s.volume !== undefined && s.volume !== 100) api.changeTrackVolume([tr], s.volume / 100);
+          if (s.muted) api.changeTrackMute([tr], true);
+          if (s.solo) api.changeTrackSolo([tr], true);
+        });
+      }
+
+      if (saved.loopStart != null && saved.loopEnd != null) {
+        setLoopStart(saved.loopStart);
+        setLoopEnd(saved.loopEnd);
+      }
+      if (saved.loopEnabled) {
+        setLoopEnabled(true);
+        loopEnabledRef.current = true;
+        api.isLooping = true;
+        if (saved.loopStart != null && saved.loopEnd != null) {
+          applyLoopRange(saved.loopStart, saved.loopEnd);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to restore song state', e);
+    }
+    restoredRef.current = true;
+  };
+
+  // Persist practice state (debounced); only after restore ran, so defaults
+  // never clobber a saved setup during load
+  useEffect(() => {
+    if (!restoredRef.current) return;
+    const id = setTimeout(() => {
+      saveSongState(file.name, {
+        v: 1,
+        speed,
+        loopEnabled,
+        loopStart,
+        loopEnd,
+        ramp: { enabled: rampEnabled, step: rampStep, target: rampTarget },
+        tuning: tuningTarget
+          ? { name: tuningTarget.name, tunings: tuningTarget.tunings, custom: !!tuningTarget.custom, mode: tuningMode }
+          : null,
+        tracks: tracks.map(t => ({ volume: t.volume, muted: t.muted, solo: t.solo })),
+        visibleTrack,
+      });
+    }, 500);
+    return () => clearTimeout(id);
+  }, [speed, loopEnabled, loopStart, loopEnd, rampEnabled, rampStep, rampTarget, tuningTarget, tuningMode, tracks, visibleTrack, file.name]);
 
   const handleVisibleTrack = (trackId) => {
     setVisibleTrack(trackId);
@@ -521,6 +661,49 @@ export default function Player({ file, onMetaLoaded }) {
     setMetronome(next);
     if (apiRef.current) apiRef.current.metronomeVolume = next ? 1 : 0;
   };
+
+  // Keyboard shortcuts: Space play/pause, L loop, arrows seek a bar, +/- speed.
+  // No deps array on purpose — re-registering each render keeps closures fresh.
+  useEffect(() => {
+    const onKey = (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'l':
+        case 'L':
+          handleLoopToggle();
+          break;
+        case 'ArrowLeft':
+        case 'ArrowRight': {
+          e.preventDefault();
+          const next = Math.max(0, Math.min(totalBars - 1, currentBar + (e.key === 'ArrowRight' ? 1 : -1)));
+          const tick = barStartTick(next);
+          if (tick !== null && apiRef.current) {
+            apiRef.current.tickPosition = tick;
+            // playedBeatChanged only fires during playback — keep the bar
+            // counter (and the next arrow press) in sync while paused
+            setCurrentBar(next);
+          }
+          break;
+        }
+        case '+':
+        case '=':
+          handleSpeedChange(Math.min(200, speed + 5));
+          break;
+        case '-':
+        case '_':
+          handleSpeedChange(Math.max(25, speed - 5));
+          break;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
   const progress = totalTicks > 0 ? currentTick / totalTicks : 0;
 
@@ -611,6 +794,7 @@ export default function Player({ file, onMetaLoaded }) {
         currentBar={currentBar}
         progress={progress}
         onRangeChange={handleLoopRange}
+        onRangeCommit={handleLoopRangeCommit}
       />
 
       <div className={styles.body}>
@@ -651,6 +835,12 @@ export default function Player({ file, onMetaLoaded }) {
         currentBar={currentBar}
         totalBars={totalBars}
         loopCount={loopCount}
+        rampEnabled={rampEnabled}
+        rampTarget={rampTarget}
+        rampStep={rampStep}
+        onRampEnabled={setRampEnabled}
+        onRampTarget={setRampTarget}
+        onRampStep={setRampStep}
       />
     </div>
   );

@@ -23,7 +23,10 @@ Load your Guitar Pro files, play them back with MIDI, loop sections with draggab
 - Metronome and count-in
 - Auto-scrolling tab notation that follows playback
 - Beat cursor and bar highlight that move with the music
-- Library metadata — title and artist extracted automatically from GP files on upload
+- Per-song practice memory — speed, loop region, ramp, tuning, and mixer are remembered per song (per browser)
+- Keyboard shortcuts — Space play/pause, L loop, ←/→ seek by bar, +/- speed
+- Touch friendly — loop handles drag on tablets and phones
+- Library metadata — title, artist, album, and tuning extracted automatically from GP files (all formats, including GP6); search by tuning to find songs matching your current setup
 - Inline metadata editor — edit title/artist for any file directly in the sidebar
 - Search across title, artist, and filename
 - Drag-and-drop upload directly in the browser
@@ -170,7 +173,7 @@ If the beat cursor and the audio don't line up (typical with Bluetooth headphone
 ## Notes
 
 - The standard SoundFont (~1.3MB) loads from jsDelivr CDN on first use and is cached by the browser
-- GP6 (BCFz format) metadata extraction not yet supported — edit manually via the pencil icon
+- Metadata is extracted with alphaTab's own parsers, so every playable format (including GP6/GP7/GP8) gets title/artist/album/tuning automatically; manual edits via the pencil icon always win over re-extraction
 - Drum tracks are automatically excluded from the track display selector
 
 ---
