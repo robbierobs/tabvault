@@ -11,6 +11,12 @@ const TRACK_COLORS = [
   '#c97aff', '#ff7aaa', '#7acfff', '#ffaa4a',
 ];
 
+const SOUNDFONTS = {
+  standard: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/soundfont/sonivox.sf2',
+  hq: '/api/soundfont/hq', // GeneralUser GS, downloaded+cached by the backend
+};
+const HQ_SOUND_KEY = 'tabvault-hq-sound';
+
 export default function Player({ file, onMetaLoaded }) {
   const containerRef = useRef(null);
   const apiRef = useRef(null);
@@ -52,6 +58,10 @@ export default function Player({ file, onMetaLoaded }) {
   const [tuningTarget, setTuningTarget] = useState(null);
   const [tuningMode, setTuningMode] = useState('refinger');
   const [tuningOutOfRange, setTuningOutOfRange] = useState(0);
+  const [hqSound, setHqSound] = useState(() => {
+    try { return localStorage.getItem(HQ_SOUND_KEY) === '1'; } catch (e) { return false; }
+  });
+  const [soundLoading, setSoundLoading] = useState(false);
 
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
 
@@ -106,7 +116,7 @@ export default function Player({ file, onMetaLoaded }) {
           enableCursor: true,
           enableAnimatedBeatCursor: true,
           scrollMode: ScrollMode.Continuous,
-          soundFont: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/soundfont/sonivox.sf2',
+          soundFont: hqSound ? SOUNDFONTS.hq : SOUNDFONTS.standard,
           scrollElement: containerRef.current.parentElement,
         }
       };
@@ -159,8 +169,16 @@ export default function Player({ file, onMetaLoaded }) {
         setLoading(false);
       });
 
+      api.soundFontLoaded.on(() => setSoundLoading(false));
+
       api.playerStateChanged.on((e) => {
         setPlaying(e.state === 1);
+      });
+
+      // Exact bar tracking (position events carry only ticks in alphaTab 1.8)
+      api.playedBeatChanged.on((beat) => {
+        const idx = beat?.voice?.bar?.index;
+        if (idx !== undefined) setCurrentBar(idx);
       });
 
       api.playerPositionChanged.on((e) => {
@@ -406,6 +424,18 @@ export default function Player({ file, onMetaLoaded }) {
     }
   };
 
+  // Hot-swap the synthesizer soundfont; playback keeps the score, only the
+  // instrument samples change
+  const handleHqSound = () => {
+    const next = !hqSound;
+    setHqSound(next);
+    try { localStorage.setItem(HQ_SOUND_KEY, next ? '1' : '0'); } catch (e) {}
+    if (apiRef.current) {
+      setSoundLoading(true);
+      apiRef.current.loadSoundFontFromUrl(next ? SOUNDFONTS.hq : SOUNDFONTS.standard, false);
+    }
+  };
+
   const handleCountIn = () => {
     const next = !countIn;
     setCountIn(next);
@@ -478,6 +508,16 @@ export default function Player({ file, onMetaLoaded }) {
               ))}
             </select>
           )}
+          <button
+            className={`${styles.iconBtn} ${hqSound ? styles.active : ''}`}
+            onClick={handleHqSound}
+            disabled={soundLoading}
+            title={hqSound
+              ? 'HQ sound on (GeneralUser GS soundfont) — click for standard'
+              : 'Switch to HQ sound — richer instrument samples (~32MB, downloaded once)'}
+          >
+            <HqSoundIcon /><span>{soundLoading ? 'Loading…' : 'HQ Sound'}</span>
+          </button>
           <button className={`${styles.iconBtn} ${metronome ? styles.active : ''}`} onClick={handleMetronome} title="Metronome">
             <MetronomeIcon /><span>Click</span>
           </button>
@@ -538,6 +578,14 @@ export default function Player({ file, onMetaLoaded }) {
         loopCount={loopCount}
       />
     </div>
+  );
+}
+
+function HqSoundIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M2 12h2l2-7 3 14 3-10 2 5 2-2h6" />
+    </svg>
   );
 }
 

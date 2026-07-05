@@ -18,6 +18,7 @@ Load your Guitar Pro files, play them back with MIDI, loop sections with draggab
 - Tuning presets for 4/5-string bass and 6/7/8-string guitar, plus fully custom tunings with a per-string editor
 - Track selector — switch which track's notation is displayed (drums excluded automatically)
 - Per-track mixer — volume, mute, and solo per instrument
+- HQ Sound toggle — swap the synth to the GeneralUser GS soundfont for noticeably richer, more realistic playback (downloaded once, cached on your server)
 - Metronome and count-in
 - Auto-scrolling tab notation that follows playback
 - Beat cursor and bar highlight that move with the music
@@ -153,9 +154,17 @@ Open http://localhost:3000
 
 ---
 
+## Sound Quality
+
+The **HQ Sound** button in the player header switches the synthesizer from the default SONiVOX soundfont (~1.3MB) to [GeneralUser GS](https://schristiancollins.com/generaluser.php) (~32MB) — much better guitar, bass, and drum samples. The soundfont is downloaded once by the backend, cached in `library/.cache/`, and served locally from then on (works offline afterwards). The preference is remembered per browser.
+
+To use a different soundfont, set the `HQ_SOUNDFONT_URL` environment variable to any SF2 URL and delete `library/.cache/hq.sf2`.
+
+---
+
 ## Notes
 
-- The SoundFont (~40MB) loads from jsDelivr CDN on first use and is cached by the browser
+- The standard SoundFont (~1.3MB) loads from jsDelivr CDN on first use and is cached by the browser
 - GP6 (BCFz format) metadata extraction not yet supported — edit manually via the pencil icon
 - Drum tracks are automatically excluded from the track display selector
 

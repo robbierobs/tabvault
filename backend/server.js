@@ -93,6 +93,45 @@ function scanMissing() {
   } catch (e) {}
 }
 
+// HQ soundfont: downloaded once from the source URL, cached inside the
+// library volume so it survives container updates, then served locally.
+const SOUNDFONT_CACHE = path.join(LIBRARY_PATH, '.cache', 'hq.sf2');
+const HQ_SOUNDFONT_URL = process.env.HQ_SOUNDFONT_URL
+  || 'https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2';
+let soundfontDownload = null; // in-flight download guard
+
+async function ensureHqSoundfont() {
+  if (fs.existsSync(SOUNDFONT_CACHE)) return;
+  if (!soundfontDownload) {
+    soundfontDownload = (async () => {
+      console.log(`Downloading HQ soundfont: ${HQ_SOUNDFONT_URL}`);
+      const resp = await fetch(HQ_SOUNDFONT_URL);
+      if (!resp.ok) throw new Error(`download failed (${resp.status})`);
+      const buf = Buffer.from(await resp.arrayBuffer());
+      if (buf.length < 4 || buf.toString('ascii', 0, 4) !== 'RIFF') {
+        throw new Error('downloaded file is not a soundfont');
+      }
+      fs.mkdirSync(path.dirname(SOUNDFONT_CACHE), { recursive: true });
+      fs.writeFileSync(SOUNDFONT_CACHE + '.tmp', buf);
+      fs.renameSync(SOUNDFONT_CACHE + '.tmp', SOUNDFONT_CACHE);
+      console.log(`HQ soundfont cached (${(buf.length / 1e6).toFixed(1)} MB)`);
+    })().finally(() => { soundfontDownload = null; });
+  }
+  return soundfontDownload;
+}
+
+app.get('/api/soundfont/hq', async (req, res) => {
+  try {
+    await ensureHqSoundfont();
+  } catch (e) {
+    console.error('HQ soundfont error:', e.message);
+    return res.status(502).json({ error: 'Could not fetch HQ soundfont: ' + e.message });
+  }
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.sendFile(path.resolve(SOUNDFONT_CACHE));
+});
+
 // List all GP files in library with metadata
 app.get('/api/library', (req, res) => {
   scanMissing();
