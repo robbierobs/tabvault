@@ -4,7 +4,9 @@ import TrackMixer from './TrackMixer.jsx';
 import PlaybackControls from './PlaybackControls.jsx';
 import LoopBar from './LoopBar.jsx';
 import TuningControls from './TuningControls.jsx';
+import AvSyncControls from './AvSyncControls.jsx';
 import { tuningLabel, refingerScore, shiftScorePitch, semitoneShift } from '../lib/tuning.js';
+import { createSyncedCursorHandler, loadAvSync, saveAvSync } from '../lib/avSync.js';
 
 const TRACK_COLORS = [
   '#e8673a', '#4a9eff', '#3acd7e', '#e8c13a',
@@ -62,6 +64,27 @@ export default function Player({ file, onMetaLoaded }) {
     try { return localStorage.getItem(HQ_SOUND_KEY) === '1'; } catch (e) { return false; }
   });
   const [soundLoading, setSoundLoading] = useState(false);
+
+  // A/V sync: positive = cursor/UI delayed (audio arrives late, e.g.
+  // Bluetooth), negative = cursor runs ahead
+  const [avSync, setAvSync] = useState(loadAvSync);
+  const avSyncRef = useRef(avSync);
+  const playingRef = useRef(false);
+  const cursorHandlerRef = useRef(null);
+  const uiTimersRef = useRef(new Set());
+  useEffect(() => { avSyncRef.current = avSync; }, [avSync]);
+
+  // route our own UI updates (progress bar, bar counter) through the same delay
+  const scheduleUi = (fn) => {
+    const off = avSyncRef.current;
+    if (off <= 0 || !playingRef.current) { fn(); return; }
+    const id = setTimeout(() => { uiTimersRef.current.delete(id); fn(); }, off);
+    uiTimersRef.current.add(id);
+  };
+  const clearUiTimers = () => {
+    for (const id of uiTimersRef.current) clearTimeout(id);
+    uiTimersRef.current.clear();
+  };
 
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
 
@@ -131,6 +154,14 @@ export default function Player({ file, onMetaLoaded }) {
       console.log('API created:', !!api);
       apiRef.current = api;
 
+      // A/V sync: time-shifted cursor placement
+      const cursorHandler = createSyncedCursorHandler(
+        () => avSyncRef.current,
+        () => playingRef.current
+      );
+      cursorHandlerRef.current = cursorHandler;
+      api.customCursorHandler = cursorHandler;
+
       // Watch beat cursor and make it visible
       const cursorObserver = new MutationObserver(() => {
         const beat = document.querySelector('.at-cursor-beat');
@@ -172,21 +203,30 @@ export default function Player({ file, onMetaLoaded }) {
       api.soundFontLoaded.on(() => setSoundLoading(false));
 
       api.playerStateChanged.on((e) => {
-        setPlaying(e.state === 1);
+        const isPlaying = e.state === 1;
+        playingRef.current = isPlaying;
+        setPlaying(isPlaying);
+        if (!isPlaying) {
+          // drop queued time-shifted updates so stale positions don't land
+          // after the final placement
+          cursorHandler.clearPending();
+          clearUiTimers();
+        }
       });
 
       // Exact bar tracking (position events carry only ticks in alphaTab 1.8)
       api.playedBeatChanged.on((beat) => {
         const idx = beat?.voice?.bar?.index;
-        if (idx !== undefined) setCurrentBar(idx);
+        if (idx !== undefined) scheduleUi(() => setCurrentBar(idx));
       });
 
       api.playerPositionChanged.on((e) => {
-        setCurrentTick(e.currentTick);
-        setTotalTicks(e.endTick);
-        if (e.currentBar !== undefined) setCurrentBar(e.currentBar);
-        if (e.endBar !== undefined) setTotalBars(e.endBar);
-        // Detect loop restart by tick jumping backwards
+        scheduleUi(() => {
+          setCurrentTick(e.currentTick);
+          setTotalTicks(e.endTick);
+        });
+        // Detect loop restart by tick jumping backwards (not delayed — the
+        // speed ramp should trigger at the actual restart)
         if (e.currentTick < lastBarRef.current - 1000) {
           setLoopCount(c => c + 1);
         }
@@ -293,12 +333,24 @@ export default function Player({ file, onMetaLoaded }) {
     initAlphaTab();
     return () => {
       initGenRef.current++; // invalidate any in-flight init
+      clearUiTimers();
+      try { cursorHandlerRef.current?.clearPending(); } catch (e) {}
       if (apiRef.current) {
         try { apiRef.current.destroy(); } catch (e) {}
         apiRef.current = null;
       }
     };
   }, [initAlphaTab]);
+
+  const handleAvSync = (ms) => {
+    setAvSync(ms);
+    avSyncRef.current = ms;
+    saveAvSync(ms);
+    // queued updates were scheduled with the old offset; drop them so the new
+    // value applies cleanly from the next beat
+    cursorHandlerRef.current?.clearPending();
+    clearUiTimers();
+  };
 
   const togglePlay = () => {
     if (!apiRef.current) return;
@@ -508,6 +560,7 @@ export default function Player({ file, onMetaLoaded }) {
               ))}
             </select>
           )}
+          <AvSyncControls offset={avSync} onChange={handleAvSync} />
           <button
             className={`${styles.iconBtn} ${hqSound ? styles.active : ''}`}
             onClick={handleHqSound}

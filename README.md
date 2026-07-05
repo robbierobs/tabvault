@@ -19,6 +19,7 @@ Load your Guitar Pro files, play them back with MIDI, loop sections with draggab
 - Track selector — switch which track's notation is displayed (drums excluded automatically)
 - Per-track mixer — volume, mute, and solo per instrument
 - HQ Sound toggle — swap the synth to the GeneralUser GS soundfont for noticeably richer, more realistic playback (downloaded once, cached on your server)
+- A/V sync — nudge the cursor earlier/later (±ms slider with auto-detect) to compensate for audio output latency, e.g. Bluetooth headphones
 - Metronome and count-in
 - Auto-scrolling tab notation that follows playback
 - Beat cursor and bar highlight that move with the music
@@ -159,6 +160,10 @@ Open http://localhost:3000
 The **HQ Sound** button in the player header switches the synthesizer from the default SONiVOX soundfont (~1.3MB) to [GeneralUser GS](https://schristiancollins.com/generaluser.php) (~32MB) — much better guitar, bass, and drum samples. The soundfont is downloaded once by the backend, cached in `library/.cache/`, and served locally from then on (works offline afterwards). The preference is remembered per browser.
 
 To use a different soundfont, set the `HQ_SOUNDFONT_URL` environment variable to any SF2 URL and delete `library/.cache/hq.sf2`.
+
+### A/V Sync
+
+If the beat cursor and the audio don't line up (typical with Bluetooth headphones, which add 100–300ms of latency the browser can't see), open **Sync** in the player header. Move the slider right if the sound arrives after the cursor, left if the cursor feels behind the music, or press **Auto-detect** to start from the latency your browser reports. The setting is remembered per browser.
 
 ---
 
