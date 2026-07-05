@@ -1,6 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import styles from './TuningControls.module.css';
-import { presetsFor, sameTuning, tuningLetters, semitoneShift } from '../lib/tuning.js';
+import {
+  presetsFor, sameTuning, tuningLetters, semitoneShift,
+  midiToNoteName, MIN_STRING_MIDI, MAX_STRING_MIDI,
+} from '../lib/tuning.js';
 
 export default function TuningControls({
   originalTunings, // the visible track's tuning as stored in the file
@@ -12,6 +15,8 @@ export default function TuningControls({
   onApply,         // (preset|null, mode) => void
 }) {
   const [open, setOpen] = useState(false);
+  const [customEditing, setCustomEditing] = useState(false);
+  const [customTunings, setCustomTunings] = useState(null);
   const wrapRef = useRef(null);
 
   useEffect(() => {
@@ -27,11 +32,20 @@ export default function TuningControls({
 
   const presets = presetsFor(originalTunings);
   const active = !!target;
-  const semis = target ? semitoneShift(originalTunings, target.tunings) : 0;
+  // Tunings the mode/semitone hints describe: the pending custom edit, or the applied target
+  const pending = customEditing ? customTunings : (target ? target.tunings : null);
+  const semis = pending ? semitoneShift(originalTunings, pending) : 0;
   const semisLabel = `${semis > 0 ? '+' : ''}${semis} semitone${Math.abs(semis) === 1 ? '' : 's'}`;
+  const targetName = customEditing ? 'this tuning' : target?.name;
 
   const handleSelect = (e) => {
     const name = e.target.value;
+    if (name === '__custom') {
+      setCustomTunings((target?.tunings ?? originalTunings).slice());
+      setCustomEditing(true);
+      return;
+    }
+    setCustomEditing(false);
     const preset = presets.find(p => p.name === name);
     // Picking the file's own tuning is the same as resetting
     if (!preset || sameTuning(preset.tunings, originalTunings)) {
@@ -40,6 +54,25 @@ export default function TuningControls({
       onApply(preset, mode);
     }
   };
+
+  const stepString = (idx, delta) => {
+    setCustomTunings(ts => ts.map((v, i) => {
+      if (i !== idx) return v;
+      return Math.max(MIN_STRING_MIDI, Math.min(MAX_STRING_MIDI, v + delta));
+    }));
+  };
+
+  const applyCustom = () => {
+    if (sameTuning(customTunings, originalTunings)) {
+      onApply(null, mode);
+    } else {
+      onApply({ name: 'Custom', tunings: customTunings.slice(), custom: true }, mode);
+    }
+  };
+
+  const selectValue = customEditing || target?.custom
+    ? '__custom'
+    : (target ? target.name : '__original');
 
   return (
     <div className={styles.wrap} ref={wrapRef}>
@@ -61,7 +94,7 @@ export default function TuningControls({
             <span className={styles.rowLabel}>Play in</span>
             <select
               className={styles.select}
-              value={target ? target.name : '__original'}
+              value={selectValue}
               onChange={handleSelect}
             >
               <option value="__original">Original — {originalLabel}</option>
@@ -70,10 +103,37 @@ export default function TuningControls({
                   {p.name}{sameTuning(p.tunings, originalTunings) ? ' (original)' : ''}
                 </option>
               ))}
+              <option value="__custom">Custom…</option>
             </select>
           </div>
 
-          {active && (
+          {(customEditing || target?.custom) && customTunings && (
+            <div className={styles.customEditor}>
+              <div className={styles.strings}>
+                {/* Steppers shown low string -> high string, like tuning names are written */}
+                {[...customTunings.keys()].reverse().map(idx => (
+                  <div key={idx} className={styles.stringCtl}>
+                    <button className={styles.stepBtn} onClick={() => stepString(idx, 1)} title="Up a semitone">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="18 15 12 9 6 15" /></svg>
+                    </button>
+                    <span className={styles.noteName}>{midiToNoteName(customTunings[idx])}</span>
+                    <button className={styles.stepBtn} onClick={() => stepString(idx, -1)} title="Down a semitone">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="6 9 12 15 18 9" /></svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                className={styles.applyBtn}
+                onClick={applyCustom}
+                disabled={!!target?.custom && sameTuning(customTunings, target.tunings)}
+              >
+                Apply {sameTuning(customTunings, originalTunings) ? '(back to original)' : `— ${tuningLetters(customTunings)}`}
+              </button>
+            </div>
+          )}
+
+          {(active || customEditing) && (
             <div className={styles.modes}>
               <label className={styles.mode}>
                 <input
@@ -84,7 +144,7 @@ export default function TuningControls({
                 />
                 <span className={styles.modeText}>
                   <strong>Re-finger tabs</strong>
-                  <span>Sounds like the original — fret numbers rewritten for {target.name}</span>
+                  <span>Sounds like the original — fret numbers rewritten for {targetName}</span>
                 </span>
               </label>
               <label className={styles.mode}>
@@ -110,7 +170,10 @@ export default function TuningControls({
           )}
 
           {active && (
-            <button className={styles.reset} onClick={() => onApply(null, mode)}>
+            <button
+              className={styles.reset}
+              onClick={() => { setCustomEditing(false); onApply(null, mode); }}
+            >
               Reset to original ({originalLabel})
             </button>
           )}

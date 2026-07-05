@@ -15,6 +15,7 @@ Load your Guitar Pro files, play them back with MIDI, loop sections with draggab
 - Speed ramp — auto-increases tempo each loop for progressive practice
 - Tuning display — the current tuning (e.g. Drop D) shown in the header
 - Play in any tuning — re-finger the tab for your tuning (same sound), or shift the audio pitch to your tuning (same tab); never modifies the file
+- Tuning presets for 4/5-string bass and 6/7/8-string guitar, plus fully custom tunings with a per-string editor
 - Track selector — switch which track's notation is displayed (drums excluded automatically)
 - Per-track mixer — volume, mute, and solo per instrument
 - Metronome and count-in
@@ -119,6 +120,8 @@ The song's tuning is shown as a badge in the header. Click the **Tuning** button
 - **Shift pitch** — the tab stays exactly as written, but all audio (every track, including bass) moves to your tuning (e.g. hear a Drop C song in Drop D so you can play along without retuning).
 
 Both are playback-only: the file on disk is never modified, and **Reset to original** puts everything back instantly.
+
+Presets cover common tunings for 4/5-string bass and 6/7/8-string guitar. Pick **Custom…** to define your own tuning — step each string up or down a semitone with the per-string editor, then hit Apply.
 
 ### Track Mixer
 - Use sliders on the right panel to balance track volumes

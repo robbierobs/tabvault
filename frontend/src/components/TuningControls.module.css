@@ -67,6 +67,74 @@
   cursor: pointer;
 }
 
+.customEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.strings {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.stringCtl {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 4px 2px;
+}
+
+.stepBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 3px 0;
+  border-radius: 4px;
+  color: var(--text3);
+  transition: all 0.15s;
+}
+
+.stepBtn:hover {
+  color: var(--accent);
+  background: var(--bg4);
+}
+
+.noteName {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.applyBtn {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  padding: 6px;
+  transition: all 0.15s;
+}
+
+.applyBtn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+
+.applyBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .modes {
   display: flex;
   flex-direction: column;

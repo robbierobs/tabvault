@@ -28,9 +28,19 @@ export const TUNING_PRESETS = {
     { name: 'B Standard', tunings: [64, 59, 55, 50, 45, 40, 35] },
     { name: 'A# Standard', tunings: [63, 58, 54, 49, 44, 39, 34] },
     { name: 'A Standard', tunings: [62, 57, 53, 48, 43, 38, 33] },
+    { name: 'G# Standard', tunings: [61, 56, 52, 47, 42, 37, 32] },
     { name: 'Drop A', tunings: [64, 59, 55, 50, 45, 40, 33] },
     { name: 'Drop G#', tunings: [63, 58, 54, 49, 44, 39, 32] },
     { name: 'Drop G', tunings: [62, 57, 53, 48, 43, 38, 31] },
+    { name: 'Drop F#', tunings: [61, 56, 52, 47, 42, 37, 30] },
+  ],
+  8: [
+    { name: 'F# Standard', tunings: [64, 59, 55, 50, 45, 40, 35, 30] },
+    { name: 'F Standard', tunings: [63, 58, 54, 49, 44, 39, 34, 29] },
+    { name: 'E Standard (8)', tunings: [62, 57, 53, 48, 43, 38, 33, 28] },
+    { name: 'Drop E', tunings: [64, 59, 55, 50, 45, 40, 35, 28] },
+    { name: 'Drop D# (8)', tunings: [63, 58, 54, 49, 44, 39, 34, 27] },
+    { name: 'Drop D (8)', tunings: [62, 57, 53, 48, 43, 38, 33, 26] },
   ],
   4: [
     { name: 'E Standard', tunings: [43, 38, 33, 28] },
@@ -50,6 +60,15 @@ export const TUNING_PRESETS = {
 };
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+// Sensible range for a string's open note (roughly C#0 to C6)
+export const MIN_STRING_MIDI = 13;
+export const MAX_STRING_MIDI = 84;
+
+// "D2" — note name with octave, for the custom tuning editor
+export function midiToNoteName(midi) {
+  return NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
+}
 
 export function sameTuning(a, b) {
   return !!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]);
