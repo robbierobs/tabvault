@@ -85,7 +85,25 @@
 
 .track {
   padding: 8px 14px;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, background 0.1s;
+}
+
+/* click anywhere on the row (except its controls) to show that track's tab */
+.selectable {
+  cursor: pointer;
+}
+
+.selectable:hover {
+  background: var(--bg3);
+}
+
+.visible {
+  background: var(--bg3);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.visible .trackName {
+  color: var(--text);
 }
 
 .muted {
@@ -182,4 +200,54 @@
   background: rgba(232, 193, 58, 0.15);
   border-color: var(--yellow);
   color: var(--yellow);
+}
+
+/* ---- Mobile: rendered inside a fixed bottom sheet (Player's mixerWrap) ---- */
+@media (max-width: 768px) {
+  .mixer {
+    width: 100%;
+    min-width: 0;
+    max-height: 65dvh;
+    border-left: none;
+    border-top: 1px solid var(--border2);
+    border-radius: 16px 16px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
+  }
+
+  /* grab-handle affordance */
+  .header::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border2);
+  }
+  .header {
+    position: relative;
+    padding-top: 18px;
+  }
+
+  .track {
+    padding: 10px 16px;
+  }
+
+  .masterSlider, .volSlider {
+    height: 6px;
+  }
+  .masterSlider::-webkit-slider-thumb,
+  .volSlider::-webkit-slider-thumb {
+    width: 20px;
+    height: 20px;
+  }
+
+  .trackBtn {
+    width: 34px;
+    height: 34px;
+    font-size: 12px;
+  }
 }

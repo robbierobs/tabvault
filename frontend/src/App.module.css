@@ -1,6 +1,7 @@
 .app {
   display: flex;
   height: 100vh;
+  height: 100dvh; /* mobile browsers: exclude the collapsing URL bar */
   overflow: hidden;
 }
 

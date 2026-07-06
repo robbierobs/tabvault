@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styles from './Sidebar.module.css';
+import { tuningLabel } from '../lib/tuning.js';
 
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes}B`;
@@ -105,10 +106,12 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
     const q = search.toLowerCase();
     const title = getDisplayTitle(f, metaCache).toLowerCase();
     const artist = (getDisplayArtist(f, metaCache) || '').toLowerCase();
+    const tuning = (f.tuning ? tuningLabel(f.tuning) || '' : '').toLowerCase();
     return (
       f.name.toLowerCase().includes(q) ||
       title.includes(q) ||
-      artist.includes(q)
+      artist.includes(q) ||
+      tuning.includes(q)
     );
   });
 
@@ -244,6 +247,9 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
                     <span className={styles.fileName}>{title}</span>
                     <span className={styles.fileSize}>
                       {artist || formatSize(file.size)}
+                      {file.tuning && tuningLabel(file.tuning) && (
+                        <span className={styles.fileTuning}> · {tuningLabel(file.tuning)}</span>
+                      )}
                     </span>
                   </div>
                   <button

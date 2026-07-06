@@ -2,8 +2,13 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg);
+}
+
+.menuBtn {
+  display: none; /* mobile only */
 }
 
 .header {
@@ -54,6 +59,12 @@
   border-radius: 10px;
 }
 
+.badgeAccent {
+  color: var(--accent);
+  background: var(--accent-glow);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 .headerRight {
   display: flex;
   align-items: center;
@@ -85,6 +96,20 @@
   background: var(--accent-glow);
 }
 
+/* after .iconBtn so it wins the display tie on desktop */
+.mobileOnly {
+  display: none;
+}
+
+/* desktop: the mixer stays a plain flex child of .body */
+.mixerWrap {
+  display: contents;
+}
+
+.mixerBackdrop {
+  display: none;
+}
+
 .body {
   flex: 1;
   display: flex;
@@ -101,7 +126,10 @@
 
 .atContainer {
   position: relative;
-  height: 6500px;
+  /* grow with the rendered score — a fixed height clips long scores,
+     especially on narrow screens where the tab reflows much taller */
+  height: auto;
+  min-height: 100%;
 }
 
 .loadOverlay, .errorOverlay {
@@ -133,4 +161,75 @@
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* ---- Mobile (Songsterr-style): full-width score, two-row header with a
+   scrollable control strip, mixer as a bottom sheet ---- */
+@media (max-width: 768px) {
+  .header {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    gap: 4px 10px;
+  }
+
+  .menuBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    color: var(--text2);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .meta {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .meta::-webkit-scrollbar { display: none; }
+  .badge { white-space: nowrap; flex-shrink: 0; }
+
+  /* second header row: all secondary controls in one swipeable strip */
+  .headerRight {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .headerRight::-webkit-scrollbar { display: none; }
+
+  .iconBtn {
+    flex-shrink: 0;
+    padding: 8px 12px;
+  }
+
+  .mobileOnly {
+    display: flex;
+  }
+
+  .mixerBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 290;
+  }
+
+  .mixerWrap {
+    display: none;
+  }
+
+  .mixerWrap.mixerOpen {
+    display: block;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 300;
+  }
 }

@@ -1,0 +1,130 @@
+.wrap {
+  position: relative;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--text3);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  color: var(--text);
+  border-color: var(--border2);
+}
+
+.btnActive {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 280px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 12px;
+  z-index: 100;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.slider {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  min-width: 52px;
+  text-align: right;
+}
+
+.scaleLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text3);
+  margin-top: -4px;
+}
+
+.buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.smallBtn {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text2);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px;
+  transition: all 0.15s;
+}
+
+.smallBtn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border2);
+}
+
+.smallBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.detected {
+  font-size: 10px;
+  color: var(--green);
+}
+
+.hint {
+  font-size: 10px;
+  color: var(--text3);
+  line-height: 1.4;
+}
+
+/* ---- Mobile: the trigger sits in a scroll-clipped strip, so the panel
+   anchors to the viewport instead ---- */
+@media (max-width: 768px) {
+  .panel {
+    position: fixed;
+    top: 108px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: calc(100dvh - 130px);
+    overflow-y: auto;
+    z-index: 600;
+  }
+}

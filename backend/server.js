@@ -3,7 +3,7 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { extractGPMeta } = require('./gpMeta');
+const { extractGPMeta, META_VERSION } = require('./gpMeta');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -17,25 +17,32 @@ if (!fs.existsSync(LIBRARY_PATH)) {
   fs.mkdirSync(LIBRARY_PATH, { recursive: true });
 }
 
-// Read or generate metadata sidecar for a file
+// Read or generate metadata sidecar for a file. Sidecars older than
+// META_VERSION are re-extracted (adds tuning etc.) while keeping any
+// manually edited title/artist/album.
 function getFileMeta(filename) {
   const metaPath = path.join(LIBRARY_PATH, filename + '.meta.json');
+  let existing = null;
   if (fs.existsSync(metaPath)) {
     try {
-      return JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      existing = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     } catch (e) {}
+    if (existing && existing.v >= META_VERSION) return existing;
   }
 
-  // Parse and cache
   const filePath = path.join(LIBRARY_PATH, filename);
-  const meta = extractGPMeta(filePath);
-  if (meta) {
-    try {
-      fs.writeFileSync(metaPath, JSON.stringify(meta));
-    } catch (e) {}
-    return meta;
+  const meta = extractGPMeta(filePath)
+    || { v: META_VERSION, title: '', artist: '', album: '', tuning: null, trackCount: 0 };
+  if (existing) {
+    // older sidecars may carry manual edits — those win over re-extraction
+    if (existing.title) meta.title = existing.title;
+    if (existing.artist) meta.artist = existing.artist;
+    if (existing.album) meta.album = existing.album;
   }
-  return { title: '', artist: '', album: '' };
+  try {
+    fs.writeFileSync(metaPath, JSON.stringify(meta));
+  } catch (e) {}
+  return meta;
 }
 
 // Scan all files on startup and generate missing meta
@@ -93,6 +100,45 @@ function scanMissing() {
   } catch (e) {}
 }
 
+// HQ soundfont: downloaded once from the source URL, cached inside the
+// library volume so it survives container updates, then served locally.
+const SOUNDFONT_CACHE = path.join(LIBRARY_PATH, '.cache', 'hq.sf2');
+const HQ_SOUNDFONT_URL = process.env.HQ_SOUNDFONT_URL
+  || 'https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2';
+let soundfontDownload = null; // in-flight download guard
+
+async function ensureHqSoundfont() {
+  if (fs.existsSync(SOUNDFONT_CACHE)) return;
+  if (!soundfontDownload) {
+    soundfontDownload = (async () => {
+      console.log(`Downloading HQ soundfont: ${HQ_SOUNDFONT_URL}`);
+      const resp = await fetch(HQ_SOUNDFONT_URL);
+      if (!resp.ok) throw new Error(`download failed (${resp.status})`);
+      const buf = Buffer.from(await resp.arrayBuffer());
+      if (buf.length < 4 || buf.toString('ascii', 0, 4) !== 'RIFF') {
+        throw new Error('downloaded file is not a soundfont');
+      }
+      fs.mkdirSync(path.dirname(SOUNDFONT_CACHE), { recursive: true });
+      fs.writeFileSync(SOUNDFONT_CACHE + '.tmp', buf);
+      fs.renameSync(SOUNDFONT_CACHE + '.tmp', SOUNDFONT_CACHE);
+      console.log(`HQ soundfont cached (${(buf.length / 1e6).toFixed(1)} MB)`);
+    })().finally(() => { soundfontDownload = null; });
+  }
+  return soundfontDownload;
+}
+
+app.get('/api/soundfont/hq', async (req, res) => {
+  try {
+    await ensureHqSoundfont();
+  } catch (e) {
+    console.error('HQ soundfont error:', e.message);
+    return res.status(502).json({ error: 'Could not fetch HQ soundfont: ' + e.message });
+  }
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.sendFile(path.resolve(SOUNDFONT_CACHE));
+});
+
 // List all GP files in library with metadata
 app.get('/api/library', (req, res) => {
   scanMissing();
@@ -109,6 +155,8 @@ app.get('/api/library', (req, res) => {
           title: meta.title || '',
           artist: meta.artist || '',
           album: meta.album || '',
+          tuning: meta.tuning || null,
+          trackCount: meta.trackCount || 0,
         };
       })
       .sort((a, b) => {
@@ -163,7 +211,11 @@ app.post('/api/meta/:filename', (req, res) => {
     return res.status(404).json({ error: 'File not found' });
   }
   const { title, artist, album } = req.body;
-  const meta = { title: title || '', artist: artist || '', album: album || '' };
+  // merge into the existing sidecar so extracted fields (tuning, ...) survive
+  const meta = getFileMeta(req.params.filename);
+  meta.title = title || '';
+  meta.artist = artist || '';
+  if (album !== undefined) meta.album = album || '';
   const metaPath = filePath + '.meta.json';
   fs.writeFileSync(metaPath, JSON.stringify(meta));
   res.json(meta);
