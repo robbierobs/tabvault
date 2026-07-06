@@ -20,7 +20,7 @@ const SOUNDFONTS = {
 };
 const HQ_SOUND_KEY = 'tabvault-hq-sound';
 
-export default function Player({ file, onMetaLoaded }) {
+export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
   const containerRef = useRef(null);
   const apiRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -69,6 +69,7 @@ export default function Player({ file, onMetaLoaded }) {
     try { return localStorage.getItem(HQ_SOUND_KEY) === '1'; } catch (e) { return false; }
   });
   const [soundLoading, setSoundLoading] = useState(false);
+  const [mixerOpen, setMixerOpen] = useState(false); // mobile bottom-sheet mixer
 
   const soundfontSwapRef = useRef(null); // {wasPlaying} while a user-initiated soundfont swap is in flight
 
@@ -715,6 +716,13 @@ export default function Player({ file, onMetaLoaded }) {
   return (
     <div className={styles.player}>
       <div className={styles.header}>
+        {onToggleSidebar && (
+          <button className={styles.menuBtn} onClick={onToggleSidebar} title="Library">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 6h18M3 12h18M3 18h18"/>
+            </svg>
+          </button>
+        )}
         <div className={styles.songInfo}>
           <h1 className={styles.title}>{scoreTitle || file.name.replace(/\.(gp\w*)$/i, '')}</h1>
           <div className={styles.meta}>
@@ -765,6 +773,15 @@ export default function Player({ file, onMetaLoaded }) {
               ))}
             </select>
           )}
+          {tracks.length > 0 && (
+            <button
+              className={`${styles.iconBtn} ${styles.mobileOnly} ${mixerOpen ? styles.active : ''}`}
+              onClick={() => setMixerOpen(o => !o)}
+              title="Mixer"
+            >
+              <MixerIcon /><span>Mixer</span>
+            </button>
+          )}
           <AvSyncControls offset={avSync} onChange={handleAvSync} />
           <button
             className={`${styles.iconBtn} ${hqSound ? styles.active : ''}`}
@@ -813,14 +830,22 @@ export default function Player({ file, onMetaLoaded }) {
           <div ref={containerRef} className={styles.atContainer} />
         </div>
         {tracks.length > 0 && (
-          <TrackMixer
-            tracks={tracks}
-            masterVolume={masterVolume}
-            onMasterVolume={handleMasterVolume}
-            onTrackVolume={handleTrackVolume}
-            onTrackMute={handleTrackMute}
-            onTrackSolo={handleTrackSolo}
-          />
+          <>
+            {mixerOpen && (
+              <div className={styles.mixerBackdrop} onClick={() => setMixerOpen(false)} />
+            )}
+            {/* desktop: transparent wrapper in the flex row; mobile: bottom sheet */}
+            <div className={`${styles.mixerWrap} ${mixerOpen ? styles.mixerOpen : ''}`}>
+              <TrackMixer
+                tracks={tracks}
+                masterVolume={masterVolume}
+                onMasterVolume={handleMasterVolume}
+                onTrackVolume={handleTrackVolume}
+                onTrackMute={handleTrackMute}
+                onTrackSolo={handleTrackSolo}
+              />
+            </div>
+          </>
         )}
       </div>
 
@@ -843,6 +868,18 @@ export default function Player({ file, onMetaLoaded }) {
         onRampStep={setRampStep}
       />
     </div>
+  );
+}
+
+function MixerIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+      <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+      <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+      <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
+      <line x1="17" y1="16" x2="23" y2="16"/>
+    </svg>
   );
 }
 

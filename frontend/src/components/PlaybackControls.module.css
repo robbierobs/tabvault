@@ -249,3 +249,92 @@
 }
 
 .rampNowBtn:disabled { opacity: 0.4; cursor: default; }
+
+/* ---- Mobile: transport + progress on the first row, speed and ramp wrap
+   below with big touch targets ---- */
+@media (max-width: 768px) {
+  .controls {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    gap: 10px 14px;
+  }
+
+  .transport {
+    gap: 12px;
+  }
+
+  .stopBtn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .playBtn {
+    width: 56px;
+    height: 56px;
+  }
+
+  .progressSection {
+    flex: 1;
+    min-width: 140px;
+  }
+
+  .progressTrack {
+    height: 6px;
+    border-radius: 3px;
+  }
+
+  /* speed becomes a single horizontal row: label + input + swipeable presets */
+  .speedSection {
+    flex: 1 1 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .speedHeader {
+    flex-shrink: 0;
+  }
+
+  .speedInput {
+    width: 56px;
+    padding: 5px 4px;
+  }
+
+  .speedPresets {
+    flex: 1;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 2px 0;
+  }
+  .speedPresets::-webkit-scrollbar { display: none; }
+
+  .preset {
+    flex-shrink: 0;
+    padding: 8px 11px;
+    font-size: 12px;
+  }
+
+  .rampSection {
+    flex: 1 1 100%;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .rampToggle {
+    padding: 8px 12px;
+  }
+
+  .rampInput {
+    width: 52px;
+    padding: 5px 3px;
+  }
+
+  .rampNowBtn {
+    padding: 8px 12px;
+  }
+}

@@ -44,6 +44,14 @@ button {
   border: none;
   background: none;
   color: inherit;
+  touch-action: manipulation; /* no 300ms double-tap-zoom delay on touch */
+}
+
+/* iOS Safari zooms the page when a focused input's font is under 16px */
+@media (max-width: 768px) {
+  input:not([type="range"]), select {
+    font-size: 16px;
+  }
 }
 
 input, select {

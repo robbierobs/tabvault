@@ -14,9 +14,13 @@ function loadCache() {
   }
 }
 
+// On phones the sidebar is a full-screen overlay, so it starts closed and
+// closes itself after picking a song
+const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
+
 export default function App() {
   const [selectedFile, setSelectedFile] = useState(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobile());
   const [metaCache, setMetaCache] = useState(loadCache);
 
   // Persist metaCache to localStorage whenever it changes
@@ -28,6 +32,7 @@ export default function App() {
 
   const handleFileSelect = useCallback((file) => {
     setSelectedFile(file);
+    if (isMobile()) setSidebarOpen(false);
   }, []);
 
   const handleMetaLoaded = useCallback((filename, title, artist) => {
@@ -48,7 +53,12 @@ export default function App() {
       />
       <main className={`${styles.main} ${!sidebarOpen ? styles.mainExpanded : ''}`}>
         {selectedFile
-          ? <Player key={selectedFile.name} file={selectedFile} onMetaLoaded={handleMetaLoaded} />
+          ? <Player
+              key={selectedFile.name}
+              file={selectedFile}
+              onMetaLoaded={handleMetaLoaded}
+              onToggleSidebar={() => setSidebarOpen(o => !o)}
+            />
           : <EmptyState onToggleSidebar={() => setSidebarOpen(true)} />
         }
       </main>

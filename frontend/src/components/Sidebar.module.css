@@ -323,3 +323,50 @@
   font-family: var(--font-mono);
   font-size: 10px;
 }
+
+/* touch screens have no hover — keep row actions visible */
+@media (hover: none) {
+  .editBtn, .deleteBtn {
+    opacity: 1;
+  }
+}
+
+/* ---- Mobile: full-screen overlay drawer ---- */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    min-width: 0;
+    height: 100dvh;
+    z-index: 500;
+    border-right: none;
+  }
+
+  /* no collapsed rail — the player header hamburger reopens the library */
+  .collapsed {
+    display: none;
+  }
+
+  .fileItem {
+    padding: 12px 10px;
+  }
+
+  .editBtn, .deleteBtn {
+    opacity: 1;
+    padding: 8px;
+  }
+
+  .toggleBtn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .dropZone {
+    padding: 14px 10px;
+  }
+
+  .fileList {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+}

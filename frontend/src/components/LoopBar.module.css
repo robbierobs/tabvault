@@ -170,3 +170,54 @@
   font-size: 11px;
   color: var(--text2);
 }
+
+/* ---- Mobile: taller strip and finger-sized drag targets ---- */
+@media (max-width: 768px) {
+  .loopBar {
+    height: 52px;
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .loopBtn {
+    padding: 8px 12px;
+  }
+
+  .track {
+    height: 30px;
+  }
+
+  .trackBg {
+    inset: 11px 0;
+  }
+
+  .loopRegion {
+    top: 7px;
+    height: 16px;
+  }
+
+  .tick {
+    top: 21px;
+  }
+
+  .tickLabel {
+    top: 8px;
+  }
+
+  .handle::after {
+    top: -10px;
+    bottom: -10px;
+    left: -16px;
+    right: -16px;
+  }
+
+  .handleLabel, .handleLabelEnd {
+    top: -14px;
+    font-size: 10px;
+    padding: 2px 5px;
+  }
+
+  .barInfo {
+    min-width: 48px;
+  }
+}

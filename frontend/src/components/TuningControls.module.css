@@ -216,3 +216,18 @@
   color: var(--text3);
   line-height: 1.4;
 }
+
+/* ---- Mobile: the trigger sits in a scroll-clipped strip, so the panel
+   anchors to the viewport instead ---- */
+@media (max-width: 768px) {
+  .panel {
+    position: fixed;
+    top: 108px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: calc(100dvh - 130px);
+    overflow-y: auto;
+    z-index: 600;
+  }
+}
