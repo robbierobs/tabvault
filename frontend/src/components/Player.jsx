@@ -843,6 +843,8 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
                 onTrackVolume={handleTrackVolume}
                 onTrackMute={handleTrackMute}
                 onTrackSolo={handleTrackSolo}
+                visibleTrack={visibleTrack}
+                onSelectTrack={handleVisibleTrack}
               />
             </div>
           </>

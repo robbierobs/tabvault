@@ -85,7 +85,25 @@
 
 .track {
   padding: 8px 14px;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, background 0.1s;
+}
+
+/* click anywhere on the row (except its controls) to show that track's tab */
+.selectable {
+  cursor: pointer;
+}
+
+.selectable:hover {
+  background: var(--bg3);
+}
+
+.visible {
+  background: var(--bg3);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.visible .trackName {
+  color: var(--text);
 }
 
 .muted {

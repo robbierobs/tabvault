@@ -1,7 +1,7 @@
 import React from 'react';
 import styles from './TrackMixer.module.css';
 
-export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTrackVolume, onTrackMute, onTrackSolo }) {
+export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTrackVolume, onTrackMute, onTrackSolo, visibleTrack, onSelectTrack }) {
   return (
     <div className={styles.mixer}>
       <div className={styles.header}>
@@ -33,8 +33,22 @@ export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTra
 
       {/* Tracks */}
       <div className={styles.tracks}>
-        {tracks.map(track => (
-          <div key={track.id} className={`${styles.track} ${track.muted ? styles.muted : ''} ${track.solo ? styles.soloed : ''}`}>
+        {tracks.map(track => {
+          // drums are excluded from tab view (matches the header dropdown)
+          const selectable = !track.isDrum && !!onSelectTrack;
+          return (
+          <div
+            key={track.id}
+            className={[
+              styles.track,
+              track.muted ? styles.muted : '',
+              track.solo ? styles.soloed : '',
+              selectable ? styles.selectable : '',
+              visibleTrack === track.id ? styles.visible : '',
+            ].join(' ')}
+            onClick={selectable ? () => onSelectTrack(track.id) : undefined}
+            title={selectable ? `Show ${track.name} tab` : undefined}
+          >
             <div className={styles.trackTop}>
               <div className={styles.dot} style={{ background: track.color }} />
               <span className={styles.trackName}>{track.name}</span>
@@ -47,23 +61,25 @@ export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTra
                 max="100"
                 value={track.volume}
                 onChange={e => onTrackVolume(track.id, Number(e.target.value))}
+                onClick={e => e.stopPropagation()}
                 style={{ '--accent-color': track.color }}
               />
               <div className={styles.buttons}>
                 <button
                   className={`${styles.trackBtn} ${styles.muteBtn} ${track.muted ? styles.btnActive : ''}`}
-                  onClick={() => onTrackMute(track.id)}
+                  onClick={e => { e.stopPropagation(); onTrackMute(track.id); }}
                   title="Mute"
                 >M</button>
                 <button
                   className={`${styles.trackBtn} ${styles.soloBtn} ${track.solo ? styles.btnActive : ''}`}
-                  onClick={() => onTrackSolo(track.id)}
+                  onClick={e => { e.stopPropagation(); onTrackSolo(track.id); }}
                   title="Solo"
                 >S</button>
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
