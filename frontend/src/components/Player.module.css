@@ -65,6 +65,102 @@
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+.badgeBtn {
+  cursor: pointer;
+  transition: color 0.15s, box-shadow 0.15s;
+}
+
+.badgeBtn:hover {
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border2);
+}
+
+.tempoWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.tempoPanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 280px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 12px;
+  z-index: 120;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tempoTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tempoRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tempoInput {
+  width: 64px;
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 4px 6px;
+  text-align: center;
+  outline: none;
+}
+
+.tempoInput:focus {
+  border-color: var(--accent);
+}
+
+.tempoUnit {
+  font-size: 11px;
+  color: var(--text3);
+}
+
+.tempoSave {
+  margin-left: auto;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+  transition: background 0.15s;
+}
+
+.tempoSave:hover:not(:disabled) {
+  background: var(--accent2);
+}
+
+.tempoSave:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tempoError {
+  font-size: 11px;
+  color: #e87a5a;
+}
+
+.tempoHint {
+  font-size: 10px;
+  color: var(--text3);
+  line-height: 1.4;
+}
+
 .headerRight {
   display: flex;
   align-items: center;
@@ -189,6 +285,18 @@
   .meta {
     overflow-x: auto;
     scrollbar-width: none;
+  }
+
+  /* the meta row scroll-clips absolute children — anchor to the viewport */
+  .tempoPanel {
+    position: fixed;
+    top: 108px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: calc(100dvh - 130px);
+    overflow-y: auto;
+    z-index: 600;
   }
   .meta::-webkit-scrollbar { display: none; }
   .badge { white-space: nowrap; flex-shrink: 0; }

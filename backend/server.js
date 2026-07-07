@@ -139,6 +139,89 @@ app.get('/api/soundfont/hq', async (req, res) => {
   res.sendFile(path.resolve(SOUNDFONT_CACHE));
 });
 
+// ---- File versions: edits (e.g. tempo changes) are saved as new .gp files
+// under .versions/<original>/vN.gp; the original is never modified. A
+// <original>.versions.json sidecar tracks the list (invisible to the
+// library scan, like .meta.json).
+function versionsDir(filename) {
+  return path.join(LIBRARY_PATH, '.versions', filename);
+}
+function versionsSidecar(filename) {
+  return path.join(LIBRARY_PATH, filename + '.versions.json');
+}
+function readVersions(filename) {
+  try {
+    const data = JSON.parse(fs.readFileSync(versionsSidecar(filename), 'utf8'));
+    if (Array.isArray(data.versions)) return data.versions;
+  } catch (e) {}
+  return [];
+}
+function writeVersions(filename, versions) {
+  fs.writeFileSync(versionsSidecar(filename), JSON.stringify({ versions }));
+}
+// resolve-and-contain check used by all version routes
+function safeLibraryPath(res, ...parts) {
+  const resolved = path.resolve(path.join(LIBRARY_PATH, ...parts));
+  if (!resolved.startsWith(path.resolve(LIBRARY_PATH))) {
+    res.status(403).json({ error: 'Forbidden' });
+    return null;
+  }
+  return resolved;
+}
+
+// List versions of a file
+app.get('/api/versions/:filename', (req, res) => {
+  const filePath = safeLibraryPath(res, req.params.filename);
+  if (!filePath) return;
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+  res.json({ versions: readVersions(req.params.filename) });
+});
+
+// Save a new version (raw GP bytes in the body). Version numbers start at 2
+// ("v1" is the original file itself).
+app.post('/api/version/:filename', express.raw({ type: 'application/octet-stream', limit: '32mb' }), (req, res) => {
+  const filePath = safeLibraryPath(res, req.params.filename);
+  if (!filePath) return;
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+  if (!req.body || req.body.length < 4) return res.status(400).json({ error: 'Empty body' });
+  // Gp7Exporter output is a zip container
+  if (req.body.toString('ascii', 0, 2) !== 'PK') {
+    return res.status(400).json({ error: 'Body is not a .gp file' });
+  }
+  const versions = readVersions(req.params.filename);
+  const v = versions.length ? Math.max(...versions.map(x => x.v)) + 1 : 2;
+  const dir = versionsDir(req.params.filename);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = `v${v}.gp`;
+  fs.writeFileSync(path.join(dir, file), req.body);
+  const entry = {
+    v,
+    file,
+    label: (req.query.label || `v${v}`).toString().slice(0, 80),
+    tempo: req.query.tempo ? Number(req.query.tempo) : undefined,
+    createdAt: new Date().toISOString(),
+    size: req.body.length,
+  };
+  versions.push(entry);
+  writeVersions(req.params.filename, versions);
+  res.json(entry);
+});
+
+// Delete one version
+app.delete('/api/version/:filename/:v', (req, res) => {
+  const filePath = safeLibraryPath(res, req.params.filename);
+  if (!filePath) return;
+  const versions = readVersions(req.params.filename);
+  const v = Number(req.params.v);
+  const entry = versions.find(x => x.v === v);
+  if (!entry) return res.status(404).json({ error: 'Version not found' });
+  const vPath = safeLibraryPath(res, '.versions', req.params.filename, entry.file);
+  if (!vPath) return;
+  try { fs.unlinkSync(vPath); } catch (e) {}
+  writeVersions(req.params.filename, versions.filter(x => x.v !== v));
+  res.json({ success: true });
+});
+
 // List all GP files in library with metadata
 app.get('/api/library', (req, res) => {
   scanMissing();
@@ -171,8 +254,17 @@ app.get('/api/library', (req, res) => {
   }
 });
 
-// Serve a specific GP file
+// Serve a specific GP file; ?v=N serves a saved version instead
 app.get('/api/file/:filename', (req, res) => {
+  const v = Number(req.query.v) || 0;
+  if (v > 0) {
+    const entry = readVersions(req.params.filename).find(x => x.v === v);
+    if (!entry) return res.status(404).json({ error: 'Version not found' });
+    const vPath = safeLibraryPath(res, '.versions', req.params.filename, entry.file);
+    if (!vPath) return;
+    if (!fs.existsSync(vPath)) return res.status(404).json({ error: 'Version file missing' });
+    return res.sendFile(vPath);
+  }
   const filePath = path.join(LIBRARY_PATH, req.params.filename);
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'File not found' });
@@ -236,6 +328,9 @@ app.delete('/api/file/:filename', (req, res) => {
   // Also delete meta sidecar if exists
   const metaPath = filePath + '.meta.json';
   if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
+  // And any saved versions
+  try { fs.rmSync(versionsDir(req.params.filename), { recursive: true, force: true }); } catch (e) {}
+  try { fs.unlinkSync(versionsSidecar(req.params.filename)); } catch (e) {}
   res.json({ success: true });
 });
 

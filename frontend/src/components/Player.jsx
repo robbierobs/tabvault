@@ -6,6 +6,7 @@ import LoopBar from './LoopBar.jsx';
 import TuningControls from './TuningControls.jsx';
 import AvSyncControls from './AvSyncControls.jsx';
 import { tuningLabel, refingerScore, shiftScorePitch, semitoneShift } from '../lib/tuning.js';
+import { scaleScoreTempo, exportScoreGp } from '../lib/editing.js';
 import { createSyncedCursorHandler, loadAvSync, saveAvSync } from '../lib/avSync.js';
 import { loadSongState, saveSongState } from '../lib/songState.js';
 
@@ -41,7 +42,19 @@ const HQ_MASTER_GAIN = 1.7;
 const BOOST_KEY = 'tabvault-boost-selected';
 const BOOST_GAIN = 1.1;
 
-export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
+const headerSelectStyle = {
+  background: 'var(--bg4)',
+  border: '1px solid var(--border2)',
+  borderRadius: '6px',
+  color: 'var(--text)',
+  fontSize: '12px',
+  padding: '4px 8px',
+  fontFamily: 'var(--font-body)',
+  cursor: 'pointer',
+  maxWidth: '160px',
+};
+
+export default function Player({ file, version = 0, onVersionChange, onMetaLoaded, onToggleSidebar }) {
   const containerRef = useRef(null);
   const apiRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -91,6 +104,33 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
   });
   const [soundLoading, setSoundLoading] = useState(false);
   const [mixerOpen, setMixerOpen] = useState(false); // mobile bottom-sheet mixer
+
+  // Edit versions (Phase 0: tempo). Original file is never modified —
+  // edits export a new .gp saved server-side; the dropdown switches them.
+  const [versions, setVersions] = useState([]);
+  const [tempoOpen, setTempoOpen] = useState(false);
+  const [tempoDraft, setTempoDraft] = useState('');
+  const [savingVersion, setSavingVersion] = useState(false);
+  const [versionError, setVersionError] = useState(null);
+  const tempoWrapRef = useRef(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/versions/${encodeURIComponent(file.name)}`)
+      .then(r => r.ok ? r.json() : { versions: [] })
+      .then(d => { if (alive) setVersions(d.versions || []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [file.name]);
+
+  useEffect(() => {
+    if (!tempoOpen) return;
+    const onDown = (e) => {
+      if (tempoWrapRef.current && !tempoWrapRef.current.contains(e.target)) setTempoOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [tempoOpen]);
   const hqSoundRef = useRef(hqSound);
   const [boostSelected, setBoostSelected] = useState(() => {
     try { return localStorage.getItem(BOOST_KEY) !== '0'; } catch (e) { return true; }
@@ -381,7 +421,9 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
         if (score.masterBars?.[0]) {
           const mb = score.masterBars[0];
           setTimeSignature(`${mb.timeSignatureNumerator}/${mb.timeSignatureDenominator}`);
-          setTempo(mb.tempo);
+          // masterBar.tempo doesn't exist in alphaTab 1.8 — the song tempo is
+          // derived from the first bar's tempo automation via score.tempo
+          setTempo(score.tempo || mb.tempoAutomations?.[0]?.value || null);
         }
 
         // Capture each track's tuning (first stringed staff) for the header
@@ -445,7 +487,7 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
 
       // Load via raw bytes (rather than URL) so tuning changes can re-parse
       // a pristine copy of the score
-      const url = `/api/file/${encodeURIComponent(file.name)}`;
+      const url = `/api/file/${encodeURIComponent(file.name)}${version > 0 ? `?v=${version}` : ''}`;
       console.log('Loading URL:', url);
       const resp = await fetch(url);
       if (!resp.ok) throw new Error(`Failed to fetch file (${resp.status})`);
@@ -458,7 +500,7 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
       setError('Failed to initialize player: ' + (e?.message || String(e)));
       setLoading(false);
     }
-  }, [file]);
+  }, [file, version]);
 
   useEffect(() => {
     initAlphaTab();
@@ -629,6 +671,47 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
     }
   };
 
+  // Persist the chosen version alongside practice state, then remount via App
+  const switchVersion = (v) => {
+    try {
+      const st = loadSongState(file.name) || {};
+      saveSongState(file.name, { ...st, version: v });
+    } catch (e) {}
+    onVersionChange?.(v);
+  };
+
+  // Change the song's real tempo: re-parse the current version's pristine
+  // bytes, scale every tempo automation, export as a new .gp version. The
+  // file being played is never modified.
+  const handleTempoSave = async () => {
+    const api = apiRef.current;
+    const at = atRef.current;
+    const newTempo = Math.max(20, Math.min(400, parseInt(tempoDraft, 10) || 0));
+    if (!api || !at || !bytesRef.current || !newTempo) return;
+    setSavingVersion(true);
+    setVersionError(null);
+    try {
+      const score = at.importer.ScoreLoader.loadScoreFromBytes(bytesRef.current, api.settings);
+      scaleScoreTempo(score, newTempo);
+      const bytes = exportScoreGp(at, score, api.settings);
+      const resp = await fetch(
+        `/api/version/${encodeURIComponent(file.name)}?label=${encodeURIComponent(newTempo + ' BPM')}&tempo=${newTempo}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }
+      );
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `Save failed (${resp.status})`);
+      }
+      const entry = await resp.json();
+      setTempoOpen(false);
+      switchVersion(entry.v);
+    } catch (e) {
+      setVersionError(e.message || String(e));
+    } finally {
+      setSavingVersion(false);
+    }
+  };
+
   // Restore saved practice state for this song. Called from scoreLoaded via a
   // ref so it always uses the current render's handlers.
   const restoredRef = useRef(false);
@@ -705,10 +788,11 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
           : null,
         tracks: tracks.map(t => ({ volume: t.volume, muted: t.muted, solo: t.solo })),
         visibleTrack,
+        version,
       });
     }, 500);
     return () => clearTimeout(id);
-  }, [speed, loopEnabled, loopStart, loopEnd, rampEnabled, rampStep, rampTarget, tuningTarget, tuningMode, tracks, visibleTrack, file.name]);
+  }, [speed, loopEnabled, loopStart, loopEnd, rampEnabled, rampStep, rampTarget, tuningTarget, tuningMode, tracks, visibleTrack, file.name, version]);
 
   const handleVisibleTrack = (trackId) => {
     setVisibleTrack(trackId);
@@ -806,7 +890,50 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
           <h1 className={styles.title}>{scoreTitle || file.name.replace(/\.(gp\w*)$/i, '')}</h1>
           <div className={styles.meta}>
             {scoreArtist && <span className={styles.artist}>{scoreArtist}</span>}
-            {tempo && <span className={styles.badge}>{tempo} BPM</span>}
+            {tempo && (
+              <span className={styles.tempoWrap} ref={tempoWrapRef}>
+                <button
+                  className={`${styles.badge} ${styles.badgeBtn}`}
+                  onClick={() => {
+                    setTempoDraft(String(tempo));
+                    setVersionError(null);
+                    setTempoOpen(o => !o);
+                  }}
+                  title="Change the song's tempo (saved as a new version)"
+                >
+                  {tempo} BPM ✎
+                </button>
+                {tempoOpen && (
+                  <div className={styles.tempoPanel}>
+                    <div className={styles.tempoTitle}>Song tempo</div>
+                    <div className={styles.tempoRow}>
+                      <input
+                        className={styles.tempoInput}
+                        type="number"
+                        min="20"
+                        max="400"
+                        value={tempoDraft}
+                        onChange={e => setTempoDraft(e.target.value)}
+                        autoFocus
+                      />
+                      <span className={styles.tempoUnit}>BPM</span>
+                      <button
+                        className={styles.tempoSave}
+                        onClick={handleTempoSave}
+                        disabled={savingVersion || !parseInt(tempoDraft, 10) || parseInt(tempoDraft, 10) === tempo}
+                      >
+                        {savingVersion ? 'Saving…' : 'Save as version'}
+                      </button>
+                    </div>
+                    {versionError && <div className={styles.tempoError}>{versionError}</div>}
+                    <div className={styles.tempoHint}>
+                      Mid-song tempo changes scale proportionally. The original file is kept —
+                      switch versions with the dropdown.
+                    </div>
+                  </div>
+                )}
+              </span>
+            )}
             {timeSignature && <span className={styles.badge}>{timeSignature}</span>}
             {totalBars > 0 && <span className={styles.badge}>{totalBars} bars</span>}
             {currentTuningLabel && (
@@ -822,6 +949,19 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
           </div>
         </div>
         <div className={styles.headerRight}>
+          {versions.length > 0 && (
+            <select
+              style={headerSelectStyle}
+              value={version}
+              onChange={e => switchVersion(Number(e.target.value))}
+              title="Switch between saved versions of this song"
+            >
+              <option value={0}>Original</option>
+              {versions.map(v => (
+                <option key={v.v} value={v.v}>{`v${v.v} · ${v.label}`}</option>
+              ))}
+            </select>
+          )}
           <TuningControls
             originalTunings={originalTuning}
             originalLabel={originalTuningLabel}
@@ -833,17 +973,7 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
           />
           {tracks.length > 1 && (
             <select
-              style={{
-                background: 'var(--bg4)',
-                border: '1px solid var(--border2)',
-                borderRadius: '6px',
-                color: 'var(--text)',
-                fontSize: '12px',
-                padding: '4px 8px',
-                fontFamily: 'var(--font-body)',
-                cursor: 'pointer',
-                maxWidth: '160px',
-              }}
+              style={headerSelectStyle}
               value={visibleTrack}
               onChange={e => handleVisibleTrack(Number(e.target.value))}
             >
