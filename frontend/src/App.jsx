@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import Player from './components/Player.jsx';
 import EmptyState from './components/EmptyState.jsx';
+import { loadSongState } from './lib/songState.js';
 import styles from './App.module.css';
 
 // Load cache from localStorage on startup
@@ -30,8 +31,12 @@ export default function App() {
     } catch (e) {}
   }, [metaCache]);
 
+  // 0 = original file; >0 = saved edit versions (.versions/<file>/vN.gp)
+  const [version, setVersion] = useState(0);
+
   const handleFileSelect = useCallback((file) => {
     setSelectedFile(file);
+    setVersion(file ? (loadSongState(file.name)?.version || 0) : 0);
     if (isMobile()) setSidebarOpen(false);
   }, []);
 
@@ -54,8 +59,10 @@ export default function App() {
       <main className={`${styles.main} ${!sidebarOpen ? styles.mainExpanded : ''}`}>
         {selectedFile
           ? <Player
-              key={selectedFile.name}
+              key={`${selectedFile.name}::v${version}`}
               file={selectedFile}
+              version={version}
+              onVersionChange={setVersion}
               onMetaLoaded={handleMetaLoaded}
               onToggleSidebar={() => setSidebarOpen(o => !o)}
             />
