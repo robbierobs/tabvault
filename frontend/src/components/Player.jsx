@@ -490,6 +490,11 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
       const url = `/api/file/${encodeURIComponent(file.name)}${version > 0 ? `?v=${version}` : ''}`;
       console.log('Loading URL:', url);
       const resp = await fetch(url);
+      if (resp.status === 404 && version > 0) {
+        // version was deleted elsewhere — fall back to the original
+        onVersionChange?.(0);
+        return;
+      }
       if (!resp.ok) throw new Error(`Failed to fetch file (${resp.status})`);
       if (gen !== initGenRef.current) return; // unmounted while fetching
       bytesRef.current = new Uint8Array(await resp.arrayBuffer());
@@ -678,6 +683,22 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
       saveSongState(file.name, { ...st, version: v });
     } catch (e) {}
     onVersionChange?.(v);
+  };
+
+  // Delete the currently selected version, then jump to the newest remaining
+  const handleDeleteVersion = async () => {
+    const entry = versions.find(x => x.v === version);
+    if (!entry) return;
+    if (!confirm(`Delete version v${entry.v} (${entry.label})? The original file is unaffected.`)) return;
+    try {
+      const resp = await fetch(`/api/version/${encodeURIComponent(file.name)}/${entry.v}`, { method: 'DELETE' });
+      if (!resp.ok) throw new Error(`Delete failed (${resp.status})`);
+      const remaining = versions.filter(x => x.v !== entry.v);
+      setVersions(remaining);
+      switchVersion(remaining.length ? Math.max(...remaining.map(x => x.v)) : 0);
+    } catch (e) {
+      console.error('Delete version failed', e);
+    }
   };
 
   // Change the song's real tempo: re-parse the current version's pristine
@@ -950,17 +971,33 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         </div>
         <div className={styles.headerRight}>
           {versions.length > 0 && (
-            <select
-              style={headerSelectStyle}
-              value={version}
-              onChange={e => switchVersion(Number(e.target.value))}
-              title="Switch between saved versions of this song"
-            >
-              <option value={0}>Original</option>
-              {versions.map(v => (
-                <option key={v.v} value={v.v}>{`v${v.v} · ${v.label}`}</option>
-              ))}
-            </select>
+            <>
+              <select
+                style={headerSelectStyle}
+                value={version}
+                onChange={e => switchVersion(Number(e.target.value))}
+                title="Switch between saved versions of this song"
+              >
+                <option value={0}>Original</option>
+                {versions.map(v => (
+                  <option key={v.v} value={v.v}>{`v${v.v} · ${v.label}`}</option>
+                ))}
+              </select>
+              {version > 0 && (
+                <button
+                  className={styles.versionDelete}
+                  onClick={handleDeleteVersion}
+                  title={`Delete version v${version}`}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14H6L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4h6v2"/>
+                  </svg>
+                </button>
+              )}
+            </>
           )}
           <TuningControls
             originalTunings={originalTuning}

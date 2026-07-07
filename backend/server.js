@@ -231,6 +231,7 @@ app.get('/api/library', (req, res) => {
       .map(f => {
         const stat = fs.statSync(path.join(LIBRARY_PATH, f));
         const meta = getFileMeta(f);
+        const versions = readVersions(f);
         return {
           name: f,
           size: stat.size,
@@ -240,6 +241,7 @@ app.get('/api/library', (req, res) => {
           album: meta.album || '',
           tuning: meta.tuning || null,
           trackCount: meta.trackCount || 0,
+          latestVersion: versions.length ? Math.max(...versions.map(x => x.v)) : 0,
         };
       })
       .sort((a, b) => {
