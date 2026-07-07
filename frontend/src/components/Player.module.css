@@ -80,6 +80,26 @@
   display: inline-flex;
 }
 
+.versionDelete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--text3);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.versionDelete:hover {
+  color: #e87a5a;
+  border-color: #e87a5a;
+  background: rgba(232, 122, 90, 0.12);
+}
+
 .tempoPanel {
   position: absolute;
   top: calc(100% + 8px);

@@ -36,7 +36,10 @@ export default function App() {
 
   const handleFileSelect = useCallback((file) => {
     setSelectedFile(file);
-    setVersion(file ? (loadSongState(file.name)?.version || 0) : 0);
+    // an explicitly chosen version (including Original = 0) wins; with no
+    // saved choice, open the newest version
+    const saved = file ? loadSongState(file.name)?.version : undefined;
+    setVersion(file ? (saved ?? file.latestVersion ?? 0) : 0);
     if (isMobile()) setSidebarOpen(false);
   }, []);
 
