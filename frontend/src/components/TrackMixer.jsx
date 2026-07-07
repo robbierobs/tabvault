@@ -1,7 +1,7 @@
 import React from 'react';
 import styles from './TrackMixer.module.css';
 
-export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTrackVolume, onTrackMute, onTrackSolo, visibleTrack, onSelectTrack }) {
+export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTrackVolume, onTrackMute, onTrackSolo, visibleTrack, onSelectTrack, boostSelected, onToggleBoost }) {
   return (
     <div className={styles.mixer}>
       <div className={styles.header}>
@@ -13,6 +13,20 @@ export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTra
           <line x1="17" y1="16" x2="23" y2="16"/>
         </svg>
         <span>Mixer</span>
+        {onToggleBoost && (
+          <button
+            className={`${styles.boostBtn} ${boostSelected ? styles.boostActive : ''}`}
+            onClick={onToggleBoost}
+            title={boostSelected
+              ? 'Selected track boosted +10% — click to disable'
+              : 'Boost the selected track +10% so it sits in front of the mix'}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M12 19V5M5 12l7-7 7 7"/>
+            </svg>
+            <span>Boost</span>
+          </button>
+        )}
       </div>
 
       {/* Master */}
