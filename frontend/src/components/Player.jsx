@@ -36,6 +36,11 @@ function hqProgramGain(program) {
 // compensated HQ mix right at the sonivox mix level.
 const HQ_MASTER_GAIN = 1.7;
 
+// "Boost selected": the track whose tab is on screen gets +10% so it sits
+// slightly in front of the backing tracks while practicing
+const BOOST_KEY = 'tabvault-boost-selected';
+const BOOST_GAIN = 1.1;
+
 export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
   const containerRef = useRef(null);
   const apiRef = useRef(null);
@@ -87,14 +92,20 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
   const [soundLoading, setSoundLoading] = useState(false);
   const [mixerOpen, setMixerOpen] = useState(false); // mobile bottom-sheet mixer
   const hqSoundRef = useRef(hqSound);
+  const [boostSelected, setBoostSelected] = useState(() => {
+    try { return localStorage.getItem(BOOST_KEY) !== '0'; } catch (e) { return true; }
+  });
+  const boostRef = useRef(boostSelected);
+  const visibleTrackRef = useRef(visibleTrack);
 
   // Single place that pushes a track's volume to the synth: mixer slider
-  // (0-100) times the HQ guitar compensation
+  // (0-100) times the HQ guitar compensation times the selected-track boost
   const setTrackSynthVolume = (trackId, sliderVal) => {
     const tr = apiRef.current?.score?.tracks?.[trackId];
     if (!tr) return;
     const gain = hqSoundRef.current ? hqProgramGain(tr.playbackInfo?.program ?? -1) : 1;
-    apiRef.current.changeTrackVolume([tr], (sliderVal / 100) * gain);
+    const boost = boostRef.current && trackId === visibleTrackRef.current ? BOOST_GAIN : 1;
+    apiRef.current.changeTrackVolume([tr], (sliderVal / 100) * gain * boost);
   };
   const setTrackSynthVolumeRef = useRef(null);
   setTrackSynthVolumeRef.current = setTrackSynthVolume;
@@ -115,6 +126,15 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
     for (const t of tracksRef.current) setTrackSynthVolume(t.id, t.volume);
     applyMasterVolume(masterVolumeRef.current);
   }, [hqSound]);
+
+  // the boost follows the visible track — re-push volumes when either the
+  // selection or the toggle changes
+  useEffect(() => {
+    boostRef.current = boostSelected;
+    visibleTrackRef.current = visibleTrack;
+    try { localStorage.setItem(BOOST_KEY, boostSelected ? '1' : '0'); } catch (e) {}
+    for (const t of tracksRef.current) setTrackSynthVolume(t.id, t.volume);
+  }, [boostSelected, visibleTrack]);
 
   const soundfontSwapRef = useRef(null); // {wasPlaying} while a user-initiated soundfont swap is in flight
 
@@ -904,6 +924,8 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
                 onTrackSolo={handleTrackSolo}
                 visibleTrack={visibleTrack}
                 onSelectTrack={handleVisibleTrack}
+                boostSelected={boostSelected}
+                onToggleBoost={() => setBoostSelected(b => !b)}
               />
             </div>
           </>

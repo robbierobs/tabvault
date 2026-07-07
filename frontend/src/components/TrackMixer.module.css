@@ -21,6 +21,34 @@
   flex-shrink: 0;
 }
 
+.boostBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text3);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+}
+
+.boostBtn:hover {
+  color: var(--text);
+  border-color: var(--border2);
+}
+
+.boostActive {
+  color: var(--green) !important;
+  border-color: var(--green) !important;
+  background: var(--green-dim) !important;
+}
+
 .masterRow {
   display: flex;
   align-items: center;
