@@ -20,6 +20,22 @@ const SOUNDFONTS = {
 };
 const HQ_SOUND_KEY = 'tabvault-hq-sound';
 
+// GeneralUser GS masters its guitar presets far quieter than sonivox — the
+// distortion preset attenuates the low-string range (where drop-tuned riffs
+// live) by ~23dB vs sonivox's ~5dB, while its bass is actually hotter. Boost
+// guitar tracks at the synth channel (mixer UI stays 0-100) when HQ is on.
+// Linear amplitude factors; the source material has >20dB headroom.
+function hqProgramGain(program) {
+  if (program === 30) return 3.5;               // distortion guitar ≈ +11dB
+  if (program === 29) return 2.0;               // overdrive guitar ≈ +6dB
+  if (program >= 24 && program <= 31) return 1.8; // other guitars ≈ +5dB
+  return 1;
+}
+// GeneralUser is also mastered ~5dB quieter overall (headroom); lift the
+// master so switching fonts keeps a comparable level. Measured RMS puts the
+// compensated HQ mix right at the sonivox mix level.
+const HQ_MASTER_GAIN = 1.7;
+
 export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
   const containerRef = useRef(null);
   const apiRef = useRef(null);
@@ -70,6 +86,35 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
   });
   const [soundLoading, setSoundLoading] = useState(false);
   const [mixerOpen, setMixerOpen] = useState(false); // mobile bottom-sheet mixer
+  const hqSoundRef = useRef(hqSound);
+
+  // Single place that pushes a track's volume to the synth: mixer slider
+  // (0-100) times the HQ guitar compensation
+  const setTrackSynthVolume = (trackId, sliderVal) => {
+    const tr = apiRef.current?.score?.tracks?.[trackId];
+    if (!tr) return;
+    const gain = hqSoundRef.current ? hqProgramGain(tr.playbackInfo?.program ?? -1) : 1;
+    apiRef.current.changeTrackVolume([tr], (sliderVal / 100) * gain);
+  };
+  const setTrackSynthVolumeRef = useRef(null);
+  setTrackSynthVolumeRef.current = setTrackSynthVolume;
+
+  const applyMasterVolume = (sliderVal) => {
+    if (!apiRef.current) return;
+    apiRef.current.masterVolume = (sliderVal / 100) * (hqSoundRef.current ? HQ_MASTER_GAIN : 1);
+  };
+  const masterVolumeRef = useRef(masterVolume);
+  useEffect(() => { masterVolumeRef.current = masterVolume; }, [masterVolume]);
+  const applyMasterVolumeRef = useRef(null);
+  applyMasterVolumeRef.current = applyMasterVolume;
+
+  // covers toggle and the failed-load revert; volumes are independent of the
+  // loaded font so this can run immediately
+  useEffect(() => {
+    hqSoundRef.current = hqSound;
+    for (const t of tracksRef.current) setTrackSynthVolume(t.id, t.volume);
+    applyMasterVolume(masterVolumeRef.current);
+  }, [hqSound]);
 
   const soundfontSwapRef = useRef(null); // {wasPlaying} while a user-initiated soundfont swap is in flight
 
@@ -161,6 +206,7 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
       }
       console.log('API created:', !!api);
       apiRef.current = api;
+      if (import.meta.env.DEV) window.__tabvaultApi = api; // e2e/debug handle
 
       // A/V sync: time-shifted cursor placement
       const cursorHandler = createSyncedCursorHandler(
@@ -212,6 +258,14 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
           pendingLoopRangeRef.current = null;
           applyLoopRangeRef.current?.(pending.start, pending.end);
         }
+        // volume commands sent before the synth instance exists are silently
+        // dropped — this is the first moment they reliably stick, so push the
+        // mixer volumes (and the HQ guitar compensation) here
+        const list = tracksRef.current.length
+          ? tracksRef.current
+          : (api.score?.tracks || []).map((_, i) => ({ id: i, volume: 100 }));
+        for (const t of list) setTrackSynthVolumeRef.current(t.id, t.volume);
+        applyMasterVolumeRef.current?.(masterVolumeRef.current);
       });
 
       // (lives on the synth, not the api facade)
@@ -249,6 +303,10 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
             if (swap.wasPlaying) api.play();
           } catch (e) {}
         }
+        // loading a font resets synth channel state — re-push mixer volumes
+        // so the HQ guitar compensation survives the swap (and applies on
+        // initial load when the font arrives after the score)
+        for (const t of tracksRef.current) setTrackSynthVolumeRef.current(t.id, t.volume);
       });
 
       api.playerStateChanged.on((e) => {
@@ -325,7 +383,7 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
           for (const t of tracksRef.current) {
             const tr = score.tracks?.[t.id];
             if (!tr) continue;
-            if (t.volume !== 100) api.changeTrackVolume([tr], t.volume / 100);
+            setTrackSynthVolumeRef.current(t.id, t.volume);
             if (t.muted) api.changeTrackMute([tr], true);
             if (t.solo) api.changeTrackSolo([tr], true);
           }
@@ -351,6 +409,9 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
           isDrum: t.isPercussion || (t.playbackInfo && t.playbackInfo.program === 0 && t.playbackInfo.primaryChannel === 9),
         }));
         setTracks(trackList);
+
+        // push initial volumes so the HQ guitar boost applies from first note
+        trackList.forEach(t => setTrackSynthVolumeRef.current(t.id, t.volume));
 
         // Initial load complete — bring back this song's saved practice state
         restoreStateRef.current?.(api);
@@ -416,7 +477,7 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
 
   const handleMasterVolume = (val) => {
     setMasterVolume(val);
-    if (apiRef.current) apiRef.current.masterVolume = val / 100;
+    applyMasterVolume(val);
   };
 
   // Exact tick position where a bar starts (bar index == masterBars.length
@@ -479,9 +540,7 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
 
   const handleTrackVolume = (trackId, vol) => {
     setTracks(ts => ts.map(t => t.id === trackId ? { ...t, volume: vol } : t));
-    if (apiRef.current?.score?.tracks?.[trackId]) {
-      apiRef.current.changeTrackVolume([apiRef.current.score.tracks[trackId]], vol / 100);
-    }
+    setTrackSynthVolume(trackId, vol);
   };
 
   const handleTrackMute = (trackId) => {
@@ -585,7 +644,7 @@ export default function Player({ file, onMetaLoaded, onToggleSidebar }) {
         saved.tracks.forEach((s, i) => {
           const tr = api.score?.tracks?.[i];
           if (!s || !tr) return;
-          if (s.volume !== undefined && s.volume !== 100) api.changeTrackVolume([tr], s.volume / 100);
+          if (s.volume !== undefined) setTrackSynthVolume(i, s.volume);
           if (s.muted) api.changeTrackMute([tr], true);
           if (s.solo) api.changeTrackSolo([tr], true);
         });
