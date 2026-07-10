@@ -12,6 +12,10 @@ import { tuningLabel, refingerScore, shiftScorePitch, semitoneShift } from '../l
 import { scaleScoreTempo, exportScoreGp } from '../lib/editing.js';
 import { createSyncedCursorHandler, loadAvSync, saveAvSync } from '../lib/avSync.js';
 import { loadSongState, saveSongState } from '../lib/songState.js';
+import { loadTuning, saveTuning, tuningTrim, installOutputChain, updateOutputChain } from '../lib/audioTuning.js';
+
+// intercept output wiring before alphaTab ever creates an AudioContext
+installOutputChain(loadTuning().compressor);
 
 const TRACK_COLORS = [
   '#e8673a', '#4a9eff', '#3acd7e', '#e8c13a',
@@ -84,21 +88,10 @@ const BANK_GAINS = {
   },
 };
 
-// Both soundfonts mix bass ~4-13dB and drums ~5-9dB above the rhythm guitars
-// (measured per-track RMS), which buries the part being practiced. Trim those
-// families at the synth channel in every font; the mixer UI stays 0-100.
-function familyTrim(track) {
-  if (track.staves?.some(s => s.isPercussion) || track.playbackInfo?.primaryChannel === 9) return 0.7; // drums ≈ −3dB
-  const p = track.playbackInfo?.program ?? -1;
-  if (p >= 32 && p <= 39) return 0.65; // basses ≈ −3.7dB
-  return 1;
-}
-
-// "Boost selected": the track whose tab is on screen gets +3.5dB so it sits
-// audibly in front of the backing tracks while practicing (the old ×1.1 was
-// +0.8dB — below the level-difference threshold most ears can detect)
+// Family trims (bass/drums sit 4-13dB above guitars in every font at ×1) and
+// the boost gain live in the user-tunable audio settings — see
+// lib/audioTuning.js for the measured defaults.
 const BOOST_KEY = 'tabvault-boost-selected';
-const BOOST_GAIN = 1.5;
 
 // GP files often carry garbage bytes in track names
 function sanitizeTrackName(name, i) {
@@ -234,6 +227,11 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const boostRef = useRef(boostSelected);
   const visibleTrackRef = useRef(visibleTrack);
 
+  // User-tunable mixing settings (family trims, master headroom, boost,
+  // compressor) — persisted, editable live from the Sound popover
+  const [audioTuning, setAudioTuning] = useState(loadTuning);
+  const audioTuningRef = useRef(audioTuning);
+
   // Single place that pushes a track's volume to the synth: mixer slider
   // (0-100) times the family trim times the bank's program compensation
   // times the selected-track boost
@@ -242,9 +240,9 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     if (!tr) return;
     const bank = BANK_GAINS[soundBankRef.current] ?? BANK_GAINS.standard;
     const isDrum = tr.staves?.some(s => s.isPercussion) || tr.playbackInfo?.primaryChannel === 9;
-    const gain = bank.program(tr.playbackInfo?.program ?? -1, isDrum) * familyTrim(tr);
+    const gain = bank.program(tr.playbackInfo?.program ?? -1, isDrum) * tuningTrim(audioTuningRef.current, tr);
     apiRef.current.changeTrackVolume([tr], (sliderVal / 100) * gain *
-      (boostRef.current && trackId === visibleTrackRef.current ? BOOST_GAIN : 1));
+      (boostRef.current && trackId === visibleTrackRef.current ? audioTuningRef.current.boost : 1));
   };
   const setTrackSynthVolumeRef = useRef(null);
   setTrackSynthVolumeRef.current = setTrackSynthVolume;
@@ -252,7 +250,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const applyMasterVolume = (sliderVal) => {
     if (!apiRef.current) return;
     const bank = BANK_GAINS[soundBankRef.current] ?? BANK_GAINS.standard;
-    apiRef.current.masterVolume = (sliderVal / 100) * bank.master;
+    apiRef.current.masterVolume = (sliderVal / 100) * bank.master * audioTuningRef.current.master;
   };
   const masterVolumeRef = useRef(masterVolume);
   useEffect(() => { masterVolumeRef.current = masterVolume; }, [masterVolume]);
@@ -266,6 +264,24 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     for (const t of tracksRef.current) setTrackSynthVolume(t.id, t.volume);
     applyMasterVolume(masterVolumeRef.current);
   }, [soundBank]);
+
+  // mixing settings changed: persist, retune the output chain, re-push all
+  // synth volumes so the new trims/master apply immediately
+  const handleAudioTuning = (patch) => {
+    setAudioTuning(prev => {
+      const next = {
+        ...prev,
+        ...patch,
+        compressor: { ...prev.compressor, ...(patch.compressor || {}) },
+      };
+      audioTuningRef.current = next;
+      saveTuning(next);
+      updateOutputChain(next.compressor);
+      for (const t of tracksRef.current) setTrackSynthVolume(t.id, t.volume);
+      applyMasterVolume(masterVolumeRef.current);
+      return next;
+    });
+  };
 
   // the boost follows the visible track — re-push volumes when either the
   // selection or the toggle changes
@@ -1276,6 +1292,8 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
               soundBank={soundBank}
               soundLoading={soundLoading}
               onSoundBank={handleSoundBank}
+              tuning={audioTuning}
+              onTuning={handleAudioTuning}
               metronome={metronome}
               onMetronome={handleMetronome}
               countIn={countIn}

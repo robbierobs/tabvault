@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import styles from './SettingsMenu.module.css';
 import { AV_SYNC_MIN, AV_SYNC_MAX, detectOutputLatency } from '../lib/avSync.js';
+import { TUNING_DEFAULTS } from '../lib/audioTuning.js';
 import { SOUND_BANKS } from './Player.jsx';
 
 // Practice settings live behind one gear button: they're set-and-forget
 // toggles, not things flipped mid-song, so they don't earn header space.
 export default function SettingsMenu({
   soundBank, soundLoading, onSoundBank,
+  tuning, onTuning,
   metronome, onMetronome,
   countIn, onCountIn,
   avSync, onAvSync,
@@ -14,6 +16,8 @@ export default function SettingsMenu({
   const [open, setOpen] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [detected, setDetected] = useState(null);
+  const [mixOpen, setMixOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const wrapRef = useRef(null);
 
   useEffect(() => {
@@ -91,6 +95,80 @@ export default function SettingsMenu({
 
           <div className={styles.divider} />
 
+          <button className={styles.disclosure} onClick={() => setMixOpen(o => !o)}>
+            <span className={styles.subTitle}>Mixing &amp; compression</span>
+            <span className={styles.disclosureArrow}>{mixOpen ? '▾' : '▸'}</span>
+          </button>
+          {mixOpen && (
+            <>
+              <MixSlider label="Master" min={50} max={120} value={tuning.master}
+                onChange={v => onTuning({ master: v })} />
+              <MixSlider label="Guitars" min={25} max={200} value={tuning.guitars}
+                onChange={v => onTuning({ guitars: v })} />
+              <MixSlider label="Bass" min={25} max={200} value={tuning.bass}
+                onChange={v => onTuning({ bass: v })} />
+              <MixSlider label="Drums" min={25} max={200} value={tuning.drums}
+                onChange={v => onTuning({ drums: v })} />
+              <MixSlider label="Other" min={25} max={200} value={tuning.other}
+                onChange={v => onTuning({ other: v })} />
+              <MixSlider label="Boost amt" min={100} max={200} value={tuning.boost}
+                onChange={v => onTuning({ boost: v })} />
+
+              <ToggleRow
+                label="Compressor"
+                hint="Evens out loud/quiet peaks on the master output"
+                checked={tuning.compressor.enabled}
+                onChange={() => onTuning({ compressor: { enabled: !tuning.compressor.enabled } })}
+              />
+              {tuning.compressor.enabled && (
+                <>
+                  <div className={styles.mixRow}>
+                    <span className={styles.mixLabel}>Threshold</span>
+                    <input type="range" className={styles.slider} min={-40} max={0} step={1}
+                      value={tuning.compressor.threshold}
+                      onChange={e => onTuning({ compressor: { threshold: Number(e.target.value) } })} />
+                    <span className={styles.mixValue}>{tuning.compressor.threshold} dB</span>
+                  </div>
+                  <div className={styles.mixRow}>
+                    <span className={styles.mixLabel}>Ratio</span>
+                    <input type="range" className={styles.slider} min={1} max={12} step={0.5}
+                      value={tuning.compressor.ratio}
+                      onChange={e => onTuning({ compressor: { ratio: Number(e.target.value) } })} />
+                    <span className={styles.mixValue}>{tuning.compressor.ratio}:1</span>
+                  </div>
+                </>
+              )}
+
+              <div className={styles.buttons}>
+                <button
+                  className={styles.smallBtn}
+                  onClick={async () => {
+                    const json = JSON.stringify(tuning, null, 2);
+                    try { await navigator.clipboard.writeText(json); } catch (e) {
+                      try { prompt('Copy your mixing settings:', JSON.stringify(tuning)); } catch (e2) {}
+                    }
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  }}
+                >
+                  {copied ? 'Copied!' : 'Copy settings'}
+                </button>
+                <button
+                  className={styles.smallBtn}
+                  onClick={() => onTuning({ ...TUNING_DEFAULTS, compressor: { ...TUNING_DEFAULTS.compressor } })}
+                >
+                  Reset defaults
+                </button>
+              </div>
+              <div className={styles.hint}>
+                Tweak while a song plays — changes apply live. Copy the settings
+                to share the mix you've dialed in.
+              </div>
+            </>
+          )}
+
+          <div className={styles.divider} />
+
           <div className={styles.subTitle}>Audio / visual sync</div>
           <div className={styles.sliderRow}>
             <input
@@ -127,6 +205,26 @@ export default function SettingsMenu({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Sliders edit linear gain factors but display percentages (100% = ×1)
+function MixSlider({ label, min, max, value, onChange }) {
+  const pct = Math.round(value * 100);
+  return (
+    <div className={styles.mixRow}>
+      <span className={styles.mixLabel}>{label}</span>
+      <input
+        type="range"
+        className={styles.slider}
+        min={min}
+        max={max}
+        step={1}
+        value={pct}
+        onChange={e => onChange(Number(e.target.value) / 100)}
+      />
+      <span className={styles.mixValue}>{pct}%</span>
     </div>
   );
 }
