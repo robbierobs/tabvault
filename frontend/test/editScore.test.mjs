@@ -452,3 +452,165 @@ test('serializeVoice/restoreVoice round-trips exactly', async () => {
   assertInvariants(score);
   assert.deepEqual(serializeVoice(voice), before);
 });
+
+// ---- Phase 3: bar operations -------------------------------------------------
+
+test('insertRestBar mid-song keeps indexes/chains and round-trips', async () => {
+  const { insertRestBar, removeBarAt } = await import('../src/lib/editScore.js');
+  const score = load();
+  const staff = firstStringedStaff(score);
+  const mbBefore = score.masterBars.length;
+  const oldBar5Beats = staff.bars[5].voices[0].beats.length;
+
+  insertRestBar(at, score, 5);
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+  assert.equal(score.masterBars.length, mbBefore + 1);
+  assert.ok(score.masterBars.every((m, i) => m.index === i));
+  assert.ok(score.tracks.every(t => t.staves.every(st =>
+    st.bars.length === mbBefore + 1 && st.bars.every((b, i) => b.index === i))));
+  assert.ok(staff.bars[5].voices[0].beats.every(b => b.isRest), 'inserted bar is rests');
+  assert.equal(staff.bars[6].voices[0].beats.length, oldBar5Beats, 'old bar shifted intact');
+
+  const re = roundTrip(score);
+  assert.equal(re.masterBars.length, mbBefore + 1);
+  // cross-bar beat chain flows through the inserted bar
+  const reStaff = re.tracks[staff.track.index].staves[staff.index];
+  assert.equal(reStaff.bars[4].voices[0].beats.at(-1).nextBeat,
+    reStaff.bars[5].voices[0].beats[0]);
+
+  assert.equal(removeBarAt(score, 5), true);
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+  assert.equal(score.masterBars.length, mbBefore);
+});
+
+test('deleting bar 0 moves the tempo automation', async () => {
+  const { removeBarAt } = await import('../src/lib/editScore.js');
+  const score = load();
+  const tempoBefore = score.tempo;
+  assert.ok(score.masterBars[0].tempoAutomations.length > 0);
+  removeBarAt(score, 0);
+  finalizeEdit(score, settings);
+  const re = roundTrip(score);
+  assert.equal(re.tempo, tempoBefore);
+});
+
+test('serializeFullBar/restoreFullBar round-trips a deleted bar exactly', async () => {
+  const { serializeFullBar, restoreFullBar, removeBarAt } = await import('../src/lib/editScore.js');
+  const score = load();
+  const staff = firstStringedStaff(score);
+  // pick a bar with actual notes
+  const bar = staff.bars.find(b => b.voices[0].beats.some(bt => bt.notes.length));
+  const index = bar.index;
+  const snapshot = serializeFullBar(score, index);
+  const mbCount = score.masterBars.length;
+
+  removeBarAt(score, index);
+  finalizeEdit(score, settings);
+  assert.equal(score.masterBars.length, mbCount - 1);
+
+  restoreFullBar(at, score, index, snapshot);
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+  assert.equal(score.masterBars.length, mbCount);
+  assert.deepEqual(serializeFullBar(score, index), snapshot, 'restored identically');
+
+  const re = roundTrip(score);
+  assert.equal(re.masterBars.length, mbCount);
+});
+
+test('setTimeSignatureRun renormalizes the contiguous run and restores', async () => {
+  const { setTimeSignatureRun, restoreTimeSignatureRun, beatTicks, barCapacityTicks, serializeFullBar } =
+    await import('../src/lib/editScore.js');
+  const { createEmptyScore } = await import('../src/lib/newSong.js');
+  const score = createEmptyScore(at, { title: 'tsig' }); // 8 bars of 4/4
+  const staff = score.tracks[0].staves[0];
+  const beforeSnapshot = serializeFullBar(score, 2);
+
+  const before = setTimeSignatureRun(at, score, 2, 3, 4);
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+  assert.equal(before.length, 6, 'applies from bar 2 to the end of the 4/4 run');
+  assert.equal(score.masterBars[1].timeSignatureNumerator, 4, 'bars before untouched');
+  for (let i = 2; i < 8; i++) {
+    const mb = score.masterBars[i];
+    assert.equal(`${mb.timeSignatureNumerator}/${mb.timeSignatureDenominator}`, '3/4');
+    const voice = staff.bars[i].voices[0];
+    assert.equal(voice.beats.reduce((a, b) => a + beatTicks(b), 0), barCapacityTicks(staff.bars[i]),
+      `bar ${i} renormalized to 3/4 capacity`);
+  }
+  const re = roundTrip(score);
+  assert.equal(re.masterBars[5].timeSignatureNumerator, 3);
+
+  restoreTimeSignatureRun(at, score, before);
+  finalizeEdit(score, settings);
+  assert.equal(score.masterBars[2].timeSignatureNumerator, 4);
+  assert.deepEqual(serializeFullBar(score, 2), beforeSnapshot, 'undo restores voices exactly');
+});
+
+test('repeat flags survive finish and export', () => {
+  const score = load();
+  score.masterBars[2].isRepeatStart = true;
+  score.masterBars[4].repeatCount = 2;
+  finalizeEdit(score, settings);
+  const re = roundTrip(score);
+  assert.equal(re.masterBars[2].isRepeatStart, true);
+  assert.equal(re.masterBars[4].repeatCount, 2);
+});
+
+// ---- Phase 4: track management -----------------------------------------------
+
+test('addTrack appends a rest-filled parallel track with free channels', async () => {
+  const { addTrack, removeTrackAt, allocateChannels, beatTicks, barCapacityTicks } =
+    await import('../src/lib/editScore.js');
+  const score = load();
+  const nTracks = score.tracks.length;
+  const mbCount = score.masterBars.length;
+
+  const track = addTrack(at, score, { name: 'Added Guitar', program: 30, strings: 7 });
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+  assert.equal(score.tracks.length, nTracks + 1);
+  assert.equal(track.index, nTracks);
+  assert.equal(track.staves[0].bars.length, mbCount, 'bars parallel to masterBars');
+  assert.equal(track.staves[0].stringTuning.tunings.length, 7);
+  // channels don't collide with any existing track (or the drum channel)
+  const others = score.tracks.slice(0, -1).flatMap(t => [t.playbackInfo.primaryChannel, t.playbackInfo.secondaryChannel]);
+  assert.ok(!others.includes(track.playbackInfo.primaryChannel));
+  assert.ok(!others.includes(track.playbackInfo.secondaryChannel));
+  assert.notEqual(track.playbackInfo.primaryChannel, 9);
+  // every bar exactly full of rests
+  for (const bar of track.staves[0].bars) {
+    const sum = bar.voices[0].beats.reduce((a, b) => a + beatTicks(b), 0);
+    assert.equal(sum, barCapacityTicks(bar));
+  }
+
+  const re = roundTrip(score);
+  assert.equal(re.tracks.length, nTracks + 1);
+  assert.equal(re.tracks[nTracks].name, 'Added Guitar');
+  assert.equal(re.tracks[nTracks].playbackInfo.program, 30);
+
+  // undo path
+  assert.equal(removeTrackAt(score, score.tracks.length - 1), true);
+  finalizeEdit(score, settings);
+  assert.equal(score.tracks.length, nTracks);
+});
+
+test('removeTrackAt reindexes and refuses to empty the score', async () => {
+  const { removeTrackAt, addTrack } = await import('../src/lib/editScore.js');
+  const score = load();
+  addTrack(at, score, { name: 'follower' }); // guarantee a track after the removed one
+  const nTracks = score.tracks.length;
+
+  assert.equal(removeTrackAt(score, nTracks - 2), true);
+  finalizeEdit(score, settings);
+  assert.ok(score.tracks.every((t, i) => t.index === i));
+  assert.equal(score.tracks[nTracks - 2].name, 'follower', 'later tracks shifted down');
+  const re = roundTrip(score);
+  assert.equal(re.tracks.length, nTracks - 1);
+
+  const single = at.importer.ScoreLoader.loadScoreFromBytes(
+    new Uint8Array(exportScoreGp(at, (await import('../src/lib/newSong.js')).createEmptyScore(at, { title: 'solo' }), settings)), settings);
+  assert.equal(removeTrackAt(single, 0), false, 'never removes the last track');
+});

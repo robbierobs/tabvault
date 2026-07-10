@@ -233,8 +233,10 @@ export function restDurationsFor(ticks) {
 export function normalizeVoice(at, voice) {
   const capacity = barCapacityTicks(voice.bar);
   let sum = voice.beats.reduce((total, b) => total + beatTicks(b), 0);
-  // trim trailing rests while the bar overflows
-  while (sum > capacity && voice.beats.length > 1) {
+  // trim trailing rests while the bar overflows — even the last one, since
+  // the padding below always refills an emptied voice (e.g. a whole rest in
+  // a bar that just became 3/4 shrinks to half + quarter rests)
+  while (sum > capacity && voice.beats.length > 0) {
     const last = voice.beats[voice.beats.length - 1];
     if (!last.isRest) break;
     sum -= beatTicks(last);
@@ -301,6 +303,219 @@ export function removeLastBar(score) {
   for (const track of score.tracks) {
     for (const staff of track.staves) staff.bars.pop();
   }
+  return true;
+}
+
+// Mid-array bar operations. CRITICAL: score.finish() does NOT re-derive bar
+// indexes or prev/next chains for spliced elements (addMasterBar/addBar set
+// them at append time, and Voice._chain navigates via nextBar.voices[i]), so
+// every splice must be followed by this reindex pass — and inserted bars must
+// mirror their neighbours' voice count.
+export function reindexBars(score) {
+  score.masterBars.forEach((mb, i) => {
+    mb.index = i;
+    mb.previousMasterBar = score.masterBars[i - 1] ?? null;
+    mb.nextMasterBar = score.masterBars[i + 1] ?? null;
+  });
+  for (const track of score.tracks) {
+    for (const staff of track.staves) {
+      staff.bars.forEach((bar, i) => {
+        bar.index = i;
+        bar.previousBar = staff.bars[i - 1] ?? null;
+        bar.nextBar = staff.bars[i + 1] ?? null;
+      });
+    }
+  }
+}
+
+// Insert a rest-filled bar at an exact index, copying the time signature,
+// clef, key and voice count from the bar currently at that position.
+export function insertRestBar(at, score, index) {
+  const ref = score.masterBars[Math.min(index, score.masterBars.length - 1)];
+  const masterBar = new at.model.MasterBar();
+  masterBar.timeSignatureNumerator = ref.timeSignatureNumerator;
+  masterBar.timeSignatureDenominator = ref.timeSignatureDenominator;
+  masterBar.score = score;
+  score.masterBars.splice(index, 0, masterBar);
+  for (const track of score.tracks) {
+    for (const staff of track.staves) {
+      const refBar = staff.bars[Math.min(index, staff.bars.length - 1)];
+      const bar = new at.model.Bar();
+      bar.staff = staff;
+      if (refBar) {
+        bar.clef = refBar.clef;
+        bar.clefOttava = refBar.clefOttava;
+        bar.keySignature = refBar.keySignature;
+        bar.keySignatureType = refBar.keySignatureType;
+      }
+      staff.bars.splice(index, 0, bar);
+      const voiceCount = Math.max(1, refBar?.voices.length ?? 1);
+      for (let vi = 0; vi < voiceCount; vi++) {
+        const voice = new at.model.Voice();
+        bar.addVoice(voice);
+        for (const d of restDurationsFor(barCapacityTicks(bar))) appendRestBeat(at, voice, d);
+      }
+    }
+  }
+  reindexBars(score);
+  return masterBar;
+}
+
+// Remove the bar at an index everywhere. Deleting bar 0 moves its tempo
+// automations onto the new first bar so the song keeps its tempo.
+export function removeBarAt(score, index) {
+  if (score.masterBars.length <= 1) return false;
+  const [removed] = score.masterBars.splice(index, 1);
+  for (const track of score.tracks) {
+    for (const staff of track.staves) staff.bars.splice(index, 1);
+  }
+  if (index === 0 && removed.tempoAutomations.length && !score.masterBars[0].tempoAutomations.length) {
+    for (const a of removed.tempoAutomations) score.masterBars[0].tempoAutomations.push(a);
+  }
+  reindexBars(score);
+  return true;
+}
+
+// Full snapshot of one bar across the whole score (master-bar props + every
+// staff's voice contents) so a bar deletion can be undone exactly.
+export function serializeFullBar(score, index) {
+  const mb = score.masterBars[index];
+  return {
+    masterBar: {
+      timeSignatureNumerator: mb.timeSignatureNumerator,
+      timeSignatureDenominator: mb.timeSignatureDenominator,
+      isRepeatStart: mb.isRepeatStart,
+      repeatCount: mb.repeatCount,
+      tempoAutomations: mb.tempoAutomations.map(a => ({ value: a.value, ratioPosition: a.ratioPosition })),
+    },
+    staves: score.tracks.flatMap(track => track.staves.map(staff =>
+      staff.bars[index].voices.map(serializeVoice))),
+  };
+}
+
+export function restoreFullBar(at, score, index, snapshot) {
+  insertRestBar(at, score, index);
+  const mb = score.masterBars[index];
+  mb.timeSignatureNumerator = snapshot.masterBar.timeSignatureNumerator;
+  mb.timeSignatureDenominator = snapshot.masterBar.timeSignatureDenominator;
+  mb.isRepeatStart = snapshot.masterBar.isRepeatStart;
+  mb.repeatCount = snapshot.masterBar.repeatCount;
+  mb.tempoAutomations.length = 0;
+  for (const data of snapshot.masterBar.tempoAutomations) {
+    const a = new at.model.Automation();
+    a.type = at.model.AutomationType.Tempo;
+    a.value = data.value;
+    if (data.ratioPosition !== undefined) a.ratioPosition = data.ratioPosition;
+    mb.tempoAutomations.push(a);
+  }
+  let flat = 0;
+  for (const track of score.tracks) {
+    for (const staff of track.staves) {
+      const bar = staff.bars[index];
+      const voiceSnapshots = snapshot.staves[flat++];
+      bar.voices.length = 0;
+      voiceSnapshots.forEach((beats) => {
+        const voice = new at.model.Voice();
+        bar.addVoice(voice);
+        restoreVoice(at, voice, beats);
+      });
+    }
+  }
+}
+
+// Change the time signature from a bar through its contiguous run of bars
+// sharing the same signature (the musical "from here onward" expectation),
+// re-normalizing every voice of every staff in the affected bars. Returns a
+// snapshot for undo: the bars' signatures + voice contents beforehand.
+export function setTimeSignatureRun(at, score, startIndex, numerator, denominator) {
+  const origNum = score.masterBars[startIndex].timeSignatureNumerator;
+  const origDen = score.masterBars[startIndex].timeSignatureDenominator;
+  const before = [];
+  for (let i = startIndex; i < score.masterBars.length; i++) {
+    const mb = score.masterBars[i];
+    if (mb.timeSignatureNumerator !== origNum || mb.timeSignatureDenominator !== origDen) break;
+    before.push({
+      index: i,
+      numerator: origNum,
+      denominator: origDen,
+      staves: score.tracks.flatMap(track => track.staves.map(staff =>
+        staff.bars[i].voices.map(serializeVoice))),
+    });
+    mb.timeSignatureNumerator = numerator;
+    mb.timeSignatureDenominator = denominator;
+    for (const track of score.tracks) {
+      for (const staff of track.staves) {
+        for (const voice of staff.bars[i].voices) normalizeVoice(at, voice);
+      }
+    }
+  }
+  return before;
+}
+
+export function restoreTimeSignatureRun(at, score, before) {
+  for (const entry of before) {
+    const mb = score.masterBars[entry.index];
+    mb.timeSignatureNumerator = entry.numerator;
+    mb.timeSignatureDenominator = entry.denominator;
+    let flat = 0;
+    for (const track of score.tracks) {
+      for (const staff of track.staves) {
+        const bar = staff.bars[entry.index];
+        const voiceSnapshots = entry.staves[flat++];
+        bar.voices.forEach((voice, vi) => {
+          if (voiceSnapshots[vi]) restoreVoice(at, voice, voiceSnapshots[vi]);
+        });
+      }
+    }
+  }
+}
+
+// ---- track management (Phase 4) ---------------------------------------------
+
+// Each track occupies two MIDI channels; channel 9 is reserved for drums.
+export function allocateChannels(score) {
+  const used = new Set(score.tracks.flatMap(t =>
+    [t.playbackInfo.primaryChannel, t.playbackInfo.secondaryChannel]));
+  let ch = 0;
+  const next = () => {
+    while (used.has(ch) || ch === 9) ch++;
+    used.add(ch);
+    return ch;
+  };
+  return { primary: next(), secondary: next() };
+}
+
+// Add a stringed track at the end of the score, rest-filled to match every
+// existing bar. Appending keeps all existing track indexes (and therefore
+// selection paths and undo entries) valid.
+export function addTrack(at, score, { name, program = 25, strings = 6 }) {
+  const track = new at.model.Track();
+  track.name = name || `Track ${score.tracks.length + 1}`;
+  track.ensureStaveCount(1);
+  track.playbackInfo.program = program;
+  const channels = allocateChannels(score);
+  track.playbackInfo.primaryChannel = channels.primary;
+  track.playbackInfo.secondaryChannel = channels.secondary;
+  score.addTrack(track); // first: bar capacity below resolves via track.score
+  const staff = track.staves[0];
+  staff.showTablature = true;
+  staff.stringTuning = at.model.Tuning.getDefaultTuningFor(strings);
+  for (let i = 0; i < score.masterBars.length; i++) {
+    const bar = new at.model.Bar();
+    staff.addBar(bar);
+    const voice = new at.model.Voice();
+    bar.addVoice(voice);
+    for (const d of restDurationsFor(barCapacityTicks(bar))) appendRestBeat(at, voice, d);
+  }
+  return track;
+}
+
+// Remove a track. Destructive across the undo model (all selection paths
+// shift), so the editor clears its history around this.
+export function removeTrackAt(score, index) {
+  if (score.tracks.length <= 1 || !score.tracks[index]) return false;
+  score.tracks.splice(index, 1);
+  score.tracks.forEach((t, i) => { t.index = i; });
   return true;
 }
 
