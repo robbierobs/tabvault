@@ -192,6 +192,46 @@
   background: #fff;
 }
 
+/* ---- mixing section ---- */
+
+.disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.disclosureArrow {
+  font-size: 10px;
+  color: var(--text3);
+}
+
+.mixRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mixLabel {
+  flex-shrink: 0;
+  width: 64px;
+  font-size: 11px;
+  color: var(--text2);
+}
+
+.mixValue {
+  flex-shrink: 0;
+  min-width: 46px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+}
+
 /* ---- A/V sync section (ported from AvSyncControls) ---- */
 
 .sliderRow {
