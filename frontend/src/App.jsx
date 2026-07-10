@@ -22,6 +22,8 @@ const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
 export default function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => !isMobile());
+  // edit mode takes over the screen: the library hides and comes back on exit
+  const [editing, setEditing] = useState(false);
   const [metaCache, setMetaCache] = useState(loadCache);
 
   // Persist metaCache to localStorage whenever it changes
@@ -53,13 +55,13 @@ export default function App() {
   return (
     <div className={styles.app}>
       <Sidebar
-        open={sidebarOpen}
+        open={sidebarOpen && !editing}
         onToggle={() => setSidebarOpen(o => !o)}
         selectedFile={selectedFile}
         onFileSelect={handleFileSelect}
         metaCache={metaCache}
       />
-      <main className={`${styles.main} ${!sidebarOpen ? styles.mainExpanded : ''}`}>
+      <main className={`${styles.main} ${!sidebarOpen || editing ? styles.mainExpanded : ''}`}>
         {selectedFile
           ? <Player
               key={`${selectedFile.name}::v${version}`}
@@ -68,6 +70,7 @@ export default function App() {
               onVersionChange={setVersion}
               onMetaLoaded={handleMetaLoaded}
               onToggleSidebar={() => setSidebarOpen(o => !o)}
+              onEditingChange={setEditing}
             />
           : <EmptyState onToggleSidebar={() => setSidebarOpen(true)} />
         }
