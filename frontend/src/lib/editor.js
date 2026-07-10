@@ -9,8 +9,13 @@
 import {
   MAX_FRET, DURATIONS, NOTE_PROPS, pathForBeat, beatAtPath, noteOnString,
   setFret, removeNoteOnString, setRest, setBeatDuration, setBeatDots, setNoteProp,
-  appendRestBeat, removeBeat, insertRestBeatAt, deleteBeat, restoreBeat, finalizeEdit,
+  insertRestBeatAt, deleteBeat, finalizeEdit,
+  normalizeVoice, serializeVoice, restoreVoice, appendBar, removeLastBar,
 } from './editScore.js';
+
+// rhythm edits change how a bar fills — the edited voice is re-normalized to
+// its time-signature capacity and undo restores the whole voice snapshot
+const NORMALIZED_KINDS = new Set(['duration', 'dots', 'insertBeat', 'deleteBeat']);
 import { exportScoreGp } from './editing.js';
 
 const UNDO_CAP = 100;
@@ -235,14 +240,16 @@ export class EditorController {
       return;
     }
     if (dir > 0) {
-      // end of song: keep entering — append a rest beat to this voice
-      this._apply({ kind: 'appendBeat', path: {
+      // end of song: keep entering — append a fresh bar (across all tracks,
+      // pre-filled with rests to the time signature) and land on its start
+      const api = this.opts.getApi();
+      if (!api?.score) return;
+      this._apply({ kind: 'appendBar', path: { ...this._selection } });
+      this._selection = {
         ...this._selection,
-        barIndex: beat.voice.bar.index,
-        voiceIndex: beat.voice.index,
-        beatIndex: beat.voice.beats.length,
-      }, duration: beat.duration });
-      this._selection = { ...this._selection, barIndex: beat.voice.bar.index, beatIndex: beat.voice.beats.length - 1 };
+        barIndex: api.score.masterBars.length - 1,
+        beatIndex: 0,
+      };
       this._emit();
     }
   }
@@ -363,27 +370,53 @@ export class EditorController {
     this._afterMutation(cmd.path.barIndex);
   }
 
+  _voiceAtPath(score, path) {
+    return score.tracks[path.trackIndex]
+      ?.staves[path.staffIndex]?.bars[path.barIndex]?.voices[path.voiceIndex] ?? null;
+  }
+
   // executes a command against the live score; records old values on the
   // command object the first time so undo/redo can replay in both directions
   _runCommand(cmd) {
     const api = this.opts.getApi();
     const at = this.opts.getAt();
     if (!api?.score || !at) return false;
-    if (cmd.kind === 'appendBeat' || cmd.kind === 'insertBeat' || cmd.kind === 'deleteBeat') {
-      const voice = api.score.tracks[cmd.path.trackIndex]
-        ?.staves[cmd.path.staffIndex]?.bars[cmd.path.barIndex]?.voices[cmd.path.voiceIndex];
+    if (cmd.kind === 'appendBar') {
+      appendBar(at, api.score);
+      return true;
+    }
+    if (NORMALIZED_KINDS.has(cmd.kind)) {
+      const voice = this._voiceAtPath(api.score, cmd.path);
       if (!voice) return false;
-      if (cmd.kind === 'appendBeat') {
-        appendRestBeat(at, voice, cmd.duration);
+      if (cmd.voiceAfter) { // redo: replay the exact normalized result
+        restoreVoice(at, voice, cmd.voiceAfter);
         return true;
       }
-      if (cmd.kind === 'insertBeat') {
-        insertRestBeatAt(at, voice, cmd.path.beatIndex, cmd.duration);
-        return true;
+      cmd.voiceBefore = serializeVoice(voice);
+      switch (cmd.kind) {
+        case 'insertBeat':
+          insertRestBeatAt(at, voice, cmd.path.beatIndex, cmd.duration);
+          break;
+        case 'deleteBeat':
+          if (!deleteBeat(voice, cmd.path.beatIndex)) return false;
+          break;
+        case 'duration': {
+          const beat = voice.beats[cmd.path.beatIndex];
+          if (!beat) return false;
+          const { oldDuration } = setBeatDuration(beat, cmd.duration);
+          cmd.oldDuration = oldDuration;
+          break;
+        }
+        case 'dots': {
+          const beat = voice.beats[cmd.path.beatIndex];
+          if (!beat) return false;
+          const { oldDots } = setBeatDots(beat, cmd.dots);
+          cmd.oldDots = oldDots;
+          break;
+        }
       }
-      const snapshot = deleteBeat(voice, cmd.path.beatIndex);
-      if (!snapshot) return false;
-      if (!cmd.snapshot) cmd.snapshot = snapshot;
+      normalizeVoice(at, voice);
+      cmd.voiceAfter = serializeVoice(voice);
       return true;
     }
     const beat = beatAtPath(api.score, cmd.path);
@@ -404,16 +437,6 @@ export class EditorController {
         if (!cmd.oldNotes) cmd.oldNotes = oldNotes;
         return true;
       }
-      case 'duration': {
-        const { oldDuration } = setBeatDuration(beat, cmd.duration);
-        if (cmd.oldDuration === undefined) cmd.oldDuration = oldDuration;
-        return true;
-      }
-      case 'dots': {
-        const { oldDots } = setBeatDots(beat, cmd.dots);
-        if (cmd.oldDots === undefined) cmd.oldDots = oldDots;
-        return true;
-      }
       case 'noteProp': {
         const result = setNoteProp(beat, cmd.string, cmd.prop, cmd.value);
         if (!result) return false;
@@ -428,15 +451,14 @@ export class EditorController {
     const api = this.opts.getApi();
     const at = this.opts.getAt();
     if (!api?.score || !at) return false;
-    if (cmd.kind === 'appendBeat' || cmd.kind === 'insertBeat' || cmd.kind === 'deleteBeat') {
-      const voice = api.score.tracks[cmd.path.trackIndex]
-        ?.staves[cmd.path.staffIndex]?.bars[cmd.path.barIndex]?.voices[cmd.path.voiceIndex];
-      if (!voice) return false;
-      if (cmd.kind === 'deleteBeat') {
-        restoreBeat(at, voice, cmd.path.beatIndex, cmd.snapshot);
-        return true;
-      }
-      return removeBeat(voice, cmd.path.beatIndex);
+    if (cmd.kind === 'appendBar') {
+      return removeLastBar(api.score);
+    }
+    if (NORMALIZED_KINDS.has(cmd.kind)) {
+      const voice = this._voiceAtPath(api.score, cmd.path);
+      if (!voice || !cmd.voiceBefore) return false;
+      restoreVoice(at, voice, cmd.voiceBefore);
+      return true;
     }
     const beat = beatAtPath(api.score, cmd.path);
     if (!beat) return false;
@@ -450,12 +472,6 @@ export class EditorController {
         return true;
       case 'rest':
         for (const n of cmd.oldNotes || []) setFret(at, beat, n.string, n.fret);
-        return true;
-      case 'duration':
-        setBeatDuration(beat, cmd.oldDuration);
-        return true;
-      case 'dots':
-        setBeatDots(beat, cmd.oldDots);
         return true;
       case 'noteProp':
         setNoteProp(beat, cmd.string, cmd.prop, cmd.oldValue);
