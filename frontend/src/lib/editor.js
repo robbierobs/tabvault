@@ -7,9 +7,9 @@
 // beatIndex, string}) rather than object references: alphaTab hands out
 // fresh objects across re-renders, only indexes are stable.
 import {
-  MAX_FRET, DURATIONS, pathForBeat, beatAtPath, noteOnString,
-  setFret, removeNoteOnString, setRest, setBeatDuration, setBeatDots,
-  appendRestBeat, removeBeat, finalizeEdit,
+  MAX_FRET, DURATIONS, NOTE_PROPS, pathForBeat, beatAtPath, noteOnString,
+  setFret, removeNoteOnString, setRest, setBeatDuration, setBeatDots, setNoteProp,
+  appendRestBeat, removeBeat, insertRestBeatAt, deleteBeat, restoreBeat, finalizeEdit,
 } from './editScore.js';
 import { exportScoreGp } from './editing.js';
 
@@ -190,6 +190,11 @@ export class EditorController {
     const claim = () => { e.preventDefault(); e.stopImmediatePropagation(); };
 
     if (/^[0-9]$/.test(e.key)) { claim(); this._enterDigit(Number(e.key)); return; }
+    if (e.shiftKey && (e.key === 'Backspace' || e.key === 'Delete')) {
+      claim();
+      this.deleteSelectedBeat();
+      return;
+    }
     switch (e.key) {
       case 'ArrowLeft': claim(); this._moveBeat(-1); return;
       case 'ArrowRight': claim(); this._moveBeat(1); return;
@@ -200,6 +205,13 @@ export class EditorController {
       case '.': claim(); this.cycleDots(); return;
       case 'r': case 'R': claim(); this.toggleRest(); return;
       case 'Delete': case 'Backspace': claim(); this.deleteNote(); return;
+      case 'Enter': claim(); this.insertBeatAfterSelection(); return;
+      case 'p': case 'P': claim(); this.toggleNoteProp('palmMute'); return;
+      case 'h': case 'H': claim(); this.toggleNoteProp('hammerPull'); return;
+      case 't': case 'T': claim(); this.toggleNoteProp('tie'); return;
+      case 'x': case 'X': claim(); this.toggleNoteProp('dead'); return;
+      case 'v': case 'V': claim(); this.toggleNoteProp('vibrato'); return;
+      case 'g': case 'G': claim(); this.toggleNoteProp('letRing'); return;
     }
   }
 
@@ -308,6 +320,41 @@ export class EditorController {
     this._apply({ kind: 'dots', path: { ...this._selection }, dots: (beat.dots + 1) % 3 });
   }
 
+  // toggle a per-note effect (palm mute, tie, hammer/pull, …) on the
+  // selected string's note; no-op when the position is empty
+  toggleNoteProp(key) {
+    const beat = this.selectedBeat();
+    const string = this._selection?.string;
+    if (!beat || !string) return;
+    const note = noteOnString(beat, string);
+    if (!note) return;
+    const prop = NOTE_PROPS[key];
+    // vibrato is an enum: cycle none (0) ↔ slight (1); the rest are booleans
+    const value = key === 'vibrato' ? (note.vibrato ? 0 : 1) : !note[prop];
+    this._apply({ kind: 'noteProp', path: { ...this._selection }, string, prop, value });
+  }
+
+  insertBeatAfterSelection() {
+    const beat = this.selectedBeat();
+    if (!beat) return;
+    const index = this._selection.beatIndex + 1;
+    this._apply({
+      kind: 'insertBeat',
+      path: { ...this._selection, beatIndex: index },
+      duration: beat.duration,
+    });
+    this._selection = { ...this._selection, beatIndex: index };
+    this._emit();
+  }
+
+  deleteSelectedBeat() {
+    const beat = this.selectedBeat();
+    if (!beat || beat.voice.beats.length <= 1) return;
+    this._apply({ kind: 'deleteBeat', path: { ...this._selection } });
+    this._clampSelection();
+    this._emit();
+  }
+
   _apply(cmd) {
     if (!this._runCommand(cmd)) return;
     this._undo.push(cmd);
@@ -322,11 +369,21 @@ export class EditorController {
     const api = this.opts.getApi();
     const at = this.opts.getAt();
     if (!api?.score || !at) return false;
-    if (cmd.kind === 'appendBeat') {
+    if (cmd.kind === 'appendBeat' || cmd.kind === 'insertBeat' || cmd.kind === 'deleteBeat') {
       const voice = api.score.tracks[cmd.path.trackIndex]
         ?.staves[cmd.path.staffIndex]?.bars[cmd.path.barIndex]?.voices[cmd.path.voiceIndex];
       if (!voice) return false;
-      appendRestBeat(at, voice, cmd.duration);
+      if (cmd.kind === 'appendBeat') {
+        appendRestBeat(at, voice, cmd.duration);
+        return true;
+      }
+      if (cmd.kind === 'insertBeat') {
+        insertRestBeatAt(at, voice, cmd.path.beatIndex, cmd.duration);
+        return true;
+      }
+      const snapshot = deleteBeat(voice, cmd.path.beatIndex);
+      if (!snapshot) return false;
+      if (!cmd.snapshot) cmd.snapshot = snapshot;
       return true;
     }
     const beat = beatAtPath(api.score, cmd.path);
@@ -357,6 +414,12 @@ export class EditorController {
         if (cmd.oldDots === undefined) cmd.oldDots = oldDots;
         return true;
       }
+      case 'noteProp': {
+        const result = setNoteProp(beat, cmd.string, cmd.prop, cmd.value);
+        if (!result) return false;
+        if (cmd.oldValue === undefined) cmd.oldValue = result.oldValue;
+        return true;
+      }
     }
     return false;
   }
@@ -365,10 +428,15 @@ export class EditorController {
     const api = this.opts.getApi();
     const at = this.opts.getAt();
     if (!api?.score || !at) return false;
-    if (cmd.kind === 'appendBeat') {
+    if (cmd.kind === 'appendBeat' || cmd.kind === 'insertBeat' || cmd.kind === 'deleteBeat') {
       const voice = api.score.tracks[cmd.path.trackIndex]
         ?.staves[cmd.path.staffIndex]?.bars[cmd.path.barIndex]?.voices[cmd.path.voiceIndex];
-      return voice ? removeBeat(voice, cmd.path.beatIndex) : false;
+      if (!voice) return false;
+      if (cmd.kind === 'deleteBeat') {
+        restoreBeat(at, voice, cmd.path.beatIndex, cmd.snapshot);
+        return true;
+      }
+      return removeBeat(voice, cmd.path.beatIndex);
     }
     const beat = beatAtPath(api.score, cmd.path);
     if (!beat) return false;
@@ -388,6 +456,9 @@ export class EditorController {
         return true;
       case 'dots':
         setBeatDots(beat, cmd.oldDots);
+        return true;
+      case 'noteProp':
+        setNoteProp(beat, cmd.string, cmd.prop, cmd.oldValue);
         return true;
     }
     return false;
@@ -585,11 +656,27 @@ export class EditorController {
 
   _buildSnapshot() {
     const beat = this._enabled ? this.selectedBeat() : null;
+    const note = beat && this._selection?.string ? noteOnString(beat, this._selection.string) : null;
     return {
       enabled: this._enabled,
       selection: this._selection ? { ...this._selection } : null,
       caret: this._enabled ? this.getCaretRect() : null,
-      beatInfo: beat ? { duration: beat.duration, dots: beat.dots, isRest: beat.isRest } : null,
+      beatInfo: beat ? {
+        duration: beat.duration,
+        dots: beat.dots,
+        isRest: beat.isRest,
+        canDeleteBeat: beat.voice.beats.length > 1,
+        hasNote: !!note,
+        note: note ? {
+          palmMute: !!note.isPalmMute,
+          letRing: !!note.isLetRing,
+          dead: !!note.isDead,
+          staccato: !!note.isStaccato,
+          hammerPull: !!note.isHammerPullOrigin,
+          tie: !!note.isTieDestination,
+          vibrato: !!note.vibrato,
+        } : null,
+      } : null,
       canUndo: this._undo.length > 0,
       canRedo: this._redo.length > 0,
       scoreDirty: this._scoreDirty,

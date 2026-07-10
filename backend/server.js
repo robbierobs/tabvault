@@ -341,6 +341,37 @@ app.get('/api/file/:filename', (req, res) => {
   res.sendFile(resolved);
 });
 
+// Create a brand-new GP file (raw .gp bytes in the body) — the "new song"
+// flow. Unlike /api/upload (multipart of an existing file) this refuses to
+// overwrite: creating twice with the same name is a conflict.
+app.post('/api/file/:filename', express.raw({ type: 'application/octet-stream', limit: '32mb' }), (req, res) => {
+  const filename = req.params.filename.replace(/[^a-zA-Z0-9._\- ]/g, '_');
+  if (!/\.(gp)$/i.test(filename)) {
+    return res.status(400).json({ error: 'Filename must end in .gp' });
+  }
+  const filePath = safeLibraryPath(res, filename);
+  if (!filePath) return;
+  if (fs.existsSync(filePath)) return res.status(409).json({ error: 'File already exists' });
+  if (!req.body || req.body.length < 4) return res.status(400).json({ error: 'Empty body' });
+  if (req.body.toString('ascii', 0, 2) !== 'PK') {
+    return res.status(400).json({ error: 'Body is not a .gp file' });
+  }
+  fs.writeFileSync(filePath + '.tmp', req.body);
+  fs.renameSync(filePath + '.tmp', filePath);
+  const meta = getFileMeta(filename);
+  res.json({
+    name: filename,
+    size: req.body.length,
+    modified: new Date().toISOString(),
+    title: meta.title || '',
+    artist: meta.artist || '',
+    album: meta.album || '',
+    tuning: meta.tuning || null,
+    trackCount: meta.trackCount || 0,
+    latestVersion: 0,
+  });
+});
+
 // Upload a GP file and immediately extract metadata
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });

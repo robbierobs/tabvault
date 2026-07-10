@@ -99,6 +99,29 @@ export function stepBeatDuration(beat, dir) {
   return setBeatDuration(beat, next);
 }
 
+// ---- note effects -----------------------------------------------------------
+// Toggleable per-note properties (Phase 2). All are plain model assignments;
+// tie/hammer chains (tieOrigin, hammerPullDestination) are resolved by
+// score.finish(). vibrato is numeric (VibratoType: 0 none, 1 slight).
+
+export const NOTE_PROPS = {
+  palmMute: 'isPalmMute',
+  letRing: 'isLetRing',
+  dead: 'isDead',
+  staccato: 'isStaccato',
+  hammerPull: 'isHammerPullOrigin',
+  tie: 'isTieDestination',
+  vibrato: 'vibrato',
+};
+
+export function setNoteProp(beat, string, prop, value) {
+  const note = noteOnString(beat, string);
+  if (!note) return null;
+  const oldValue = note[prop];
+  note[prop] = value;
+  return { oldValue };
+}
+
 // ---- structure transforms -------------------------------------------------
 
 // Append a rest beat at the end of a voice (continuous entry past the last
@@ -116,6 +139,57 @@ export function removeBeat(voice, beatIndex) {
   if (voice.beats.length <= 1) return false;
   voice.beats.splice(beatIndex, 1);
   return true;
+}
+
+// Insert a rest beat at an exact index (0..length). Splice + parent ref is
+// enough: score.finish() rebuilds indexes and next/prev chains.
+export function insertRestBeatAt(at, voice, index, duration = 4) {
+  const beat = new at.model.Beat();
+  beat.duration = duration;
+  beat.voice = voice;
+  voice.beats.splice(index, 0, beat);
+  return beat;
+}
+
+// Snapshot a beat's editable content so a deletion can be undone exactly.
+export function serializeBeat(beat) {
+  return {
+    duration: beat.duration,
+    dots: beat.dots,
+    notes: beat.notes.map(n => {
+      const data = { string: n.string, fret: n.fret };
+      for (const prop of Object.values(NOTE_PROPS)) {
+        if (n[prop]) data[prop] = n[prop];
+      }
+      return data;
+    }),
+  };
+}
+
+// Delete a beat, returning its snapshot for undo (null = refused, last beat).
+export function deleteBeat(voice, beatIndex) {
+  const beat = voice.beats[beatIndex];
+  if (!beat || voice.beats.length <= 1) return null;
+  const snapshot = serializeBeat(beat);
+  voice.beats.splice(beatIndex, 1);
+  return snapshot;
+}
+
+// Inverse of deleteBeat: rebuild the beat from its snapshot at its old index.
+export function restoreBeat(at, voice, index, snapshot) {
+  const beat = insertRestBeatAt(at, voice, index, snapshot.duration);
+  beat.dots = snapshot.dots;
+  for (const data of snapshot.notes) {
+    const note = new at.model.Note();
+    note.string = data.string;
+    note.fret = data.fret;
+    for (const prop of Object.values(NOTE_PROPS)) {
+      if (data[prop] !== undefined) note[prop] = data[prop];
+    }
+    beat.addNote(note);
+  }
+  if (snapshot.notes.length) beat.isEmpty = false;
+  return beat;
 }
 
 // Rebuild all derived state after a batch of mutations.

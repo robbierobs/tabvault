@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styles from './Sidebar.module.css';
 import { tuningLabel } from '../lib/tuning.js';
+import { createEmptyScore, suggestFilename } from '../lib/newSong.js';
+import { exportScoreGp } from '../lib/editing.js';
 
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes}B`;
@@ -36,6 +38,50 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
   const [editingFile, setEditingFile] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [editArtist, setEditArtist] = useState('');
+
+  // "New song": build a blank score client-side and save it to the library
+  const [newOpen, setNewOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newArtist, setNewArtist] = useState('');
+  const [newTempo, setNewTempo] = useState('120');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState(null);
+
+  const handleCreateSong = async () => {
+    const title = newTitle.trim();
+    if (!title) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const mod = await import('@coderline/alphatab');
+      const at = mod.alphaTab ?? mod.default ?? mod;
+      const score = createEmptyScore(at, {
+        title,
+        artist: newArtist.trim(),
+        tempo: parseInt(newTempo, 10) || 120,
+      });
+      const bytes = exportScoreGp(at, score, new at.Settings());
+      const resp = await fetch(`/api/file/${encodeURIComponent(suggestFilename(title))}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: bytes,
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `Create failed (${resp.status})`);
+      }
+      const entry = await resp.json();
+      setNewOpen(false);
+      setNewTitle('');
+      setNewArtist('');
+      await fetchLibrary();
+      onFileSelect(entry);
+    } catch (e) {
+      setCreateError(e.message || String(e));
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const fetchLibrary = async () => {
     try {
@@ -193,6 +239,54 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
           </>
         )}
       </div>
+
+      <button className={styles.newSongBtn} onClick={() => { setNewOpen(o => !o); setCreateError(null); }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        <span>New song</span>
+      </button>
+      {newOpen && (
+        <div className={styles.newSongForm}>
+          <input
+            className={styles.editInput}
+            value={newTitle}
+            onChange={e => setNewTitle(e.target.value)}
+            placeholder="Title"
+            autoFocus
+            onKeyDown={e => { if (e.key === 'Enter') handleCreateSong(); }}
+          />
+          <input
+            className={styles.editInput}
+            value={newArtist}
+            onChange={e => setNewArtist(e.target.value)}
+            placeholder="Artist (optional)"
+          />
+          <div className={styles.newSongRow}>
+            <input
+              className={styles.editInput}
+              type="number"
+              min="20"
+              max="400"
+              value={newTempo}
+              onChange={e => setNewTempo(e.target.value)}
+              title="Tempo (BPM)"
+            />
+            <button
+              className={styles.editSave}
+              disabled={creating || !newTitle.trim()}
+              onClick={handleCreateSong}
+            >
+              {creating ? 'Creating…' : 'Create'}
+            </button>
+            <button className={styles.editCancel} onClick={() => setNewOpen(false)}>Cancel</button>
+          </div>
+          {createError && <div className={styles.error}>{createError}</div>}
+          <div className={styles.hint} style={{ padding: 0 }}>
+            One guitar track, 8 empty 4/4 bars — open it and hit Edit to write the tab.
+          </div>
+        </div>
+      )}
 
       <div className={styles.listHeader}>
         <span>LIBRARY</span>

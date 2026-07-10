@@ -74,6 +74,43 @@ export default function EditToolbar({ ed, editor, saving, saveError, onSaveVersi
         >
           Del
         </button>
+        <button
+          className={styles.btn}
+          disabled={!hasSel}
+          onClick={() => editor.insertBeatAfterSelection()}
+          title="Insert a beat after this one ( Enter )"
+        >
+          +Beat
+        </button>
+        <button
+          className={styles.btn}
+          disabled={!hasSel || !info?.canDeleteBeat}
+          onClick={() => editor.deleteSelectedBeat()}
+          title="Delete this beat ( Shift+Del )"
+        >
+          −Beat
+        </button>
+      </div>
+
+      <div className={styles.group}>
+        {[
+          ['palmMute', 'PM', 'Palm mute ( P )'],
+          ['hammerPull', 'H/P', 'Hammer-on / pull-off to the next note ( H )'],
+          ['tie', 'Tie', 'Tie to the previous note ( T )'],
+          ['dead', '✕', 'Dead note ( X )'],
+          ['vibrato', 'Vib', 'Vibrato ( V )'],
+          ['letRing', 'Ring', 'Let ring ( G )'],
+        ].map(([key, label, title]) => (
+          <button
+            key={key}
+            className={`${styles.btn} ${info?.note?.[key] ? styles.active : ''}`}
+            disabled={!info?.hasNote}
+            onClick={() => editor.toggleNoteProp(key)}
+            title={title}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className={styles.group}>
@@ -83,7 +120,7 @@ export default function EditToolbar({ ed, editor, saving, saveError, onSaveVersi
 
       <span className={styles.hint}>
         {hasSel
-          ? (ed.digitPending != null ? `Fret: ${ed.digitPending}…` : 'Type fret numbers · arrows move · R rest · Del remove')
+          ? (ed.digitPending != null ? `Fret: ${ed.digitPending}…` : 'Type frets · arrows move · Enter inserts a beat')
           : 'Click a string in the tab to start editing'}
       </span>
 
