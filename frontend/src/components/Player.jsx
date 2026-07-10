@@ -18,27 +18,60 @@ const TRACK_COLORS = [
   '#c97aff', '#ff7aaa', '#7acfff', '#ffaa4a',
 ];
 
-const SOUNDFONTS = {
-  standard: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/soundfont/sonivox.sf2',
-  hq: '/api/soundfont/hq', // GeneralUser GS, downloaded+cached by the backend
+// Sound banks: opt-in alternative soundfonts, downloaded once and cached by
+// the backend (except the small built-in default). SF2 and SF3 both work —
+// alphaTab bundles a vorbis decoder for SF3's compressed samples.
+export const SOUND_BANKS = {
+  standard: {
+    label: 'Standard',
+    detail: 'Built-in (1 MB) — instant',
+    url: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/soundfont/sonivox.sf2',
+  },
+  hq: {
+    label: 'HQ · GeneralUser GS',
+    detail: '32 MB, downloaded once',
+    url: '/api/soundfont/hq',
+  },
+  musescore: {
+    label: 'MuseScore General',
+    detail: '38 MB, downloaded once',
+    url: '/api/soundfont/musescore',
+  },
+  // Arachno 1.0 was evaluated and rejected: alphaSynth renders pure NaN
+  // (silence) from it despite a well-formed sfbk — verified on 1.8.3, 1.8.4
+  // and 1.9.0-alpha.1860, so it's an unfixed upstream bug. See project notes.
 };
-const HQ_SOUND_KEY = 'tabvault-hq-sound';
+const SOUND_BANK_KEY = 'tabvault-sound-bank';
+const LEGACY_HQ_KEY = 'tabvault-hq-sound'; // pre-bank boolean toggle
 
-// GeneralUser GS masters some presets far from sonivox's levels. Values are
-// calibrated against live per-track RMS (solo each track, both fonts,
-// 2026-07-10): distortion needs a big lift, pick bass measured 6dB under
-// sonivox, and everything else lands at parity from HQ_MASTER_GAIN alone —
-// the old blanket 24-31 boost made overdrive/clean guitars ~5-7dB too loud.
-// Linear amplitude factors; the source material has >20dB headroom.
-function hqProgramGain(program) {
-  if (program === 30) return 3.0; // distortion guitar ≈ +9.5dB
-  if (program === 34) return 2.0; // pick bass ≈ +6dB
-  return 1;
+function loadSoundBank() {
+  try {
+    const v = localStorage.getItem(SOUND_BANK_KEY);
+    if (v && SOUND_BANKS[v]) return v;
+    if (localStorage.getItem(LEGACY_HQ_KEY) === '1') return 'hq'; // migrate
+  } catch (e) {}
+  return 'standard';
 }
-// GeneralUser is also mastered ~5dB quieter overall (headroom); lift the
-// master so switching fonts keeps a comparable level. Measured RMS puts the
-// compensated HQ mix right at the sonivox mix level.
-const HQ_MASTER_GAIN = 1.7;
+
+// Per-bank level calibration, measured as live per-track RMS through the app
+// (solo each track, compare against the standard font — see project notes,
+// 2026-07-10). `master` aligns the bank's overall mix with sonivox; `program`
+// returns a linear per-channel factor for presets that stray from parity.
+const BANK_GAINS = {
+  standard: { master: 1, program: () => 1 },
+  // GeneralUser GS: distortion mastered way down, pick bass 6dB under; the
+  // old blanket 24-31 boost made overdrive/clean guitars ~5-7dB too loud.
+  hq: {
+    master: 1.7,
+    program: (p) => (p === 30 ? 3.0 : p === 34 ? 2.0 : 1),
+  },
+  // MuseScore General: guitars ~10dB under sonivox, finger bass 4dB under,
+  // drum kit ~7dB hot (its snare/kick peak near clipping)
+  musescore: {
+    master: 1,
+    program: (p, drum) => (drum ? 0.45 : p === 29 ? 3.5 : p === 30 ? 3.2 : p === 33 ? 1.6 : 1),
+  },
+};
 
 // Both soundfonts mix bass ~4-13dB and drums ~5-9dB above the rhythm guitars
 // (measured per-track RMS), which buries the part being practiced. Trim those
@@ -122,9 +155,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const [tuningTarget, setTuningTarget] = useState(null);
   const [tuningMode, setTuningMode] = useState('refinger');
   const [tuningOutOfRange, setTuningOutOfRange] = useState(0);
-  const [hqSound, setHqSound] = useState(() => {
-    try { return localStorage.getItem(HQ_SOUND_KEY) === '1'; } catch (e) { return false; }
-  });
+  const [soundBank, setSoundBank] = useState(loadSoundBank);
   const [soundLoading, setSoundLoading] = useState(false);
   const [mixerOpen, setMixerOpen] = useState(false); // mobile bottom-sheet mixer
 
@@ -185,7 +216,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [tempoOpen]);
-  const hqSoundRef = useRef(hqSound);
+  const soundBankRef = useRef(soundBank);
   const [boostSelected, setBoostSelected] = useState(() => {
     try { return localStorage.getItem(BOOST_KEY) !== '0'; } catch (e) { return true; }
   });
@@ -193,34 +224,37 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const visibleTrackRef = useRef(visibleTrack);
 
   // Single place that pushes a track's volume to the synth: mixer slider
-  // (0-100) times the family trim times the HQ program compensation times
-  // the selected-track boost
+  // (0-100) times the family trim times the bank's program compensation
+  // times the selected-track boost
   const setTrackSynthVolume = (trackId, sliderVal) => {
     const tr = apiRef.current?.score?.tracks?.[trackId];
     if (!tr) return;
-    const gain = (hqSoundRef.current ? hqProgramGain(tr.playbackInfo?.program ?? -1) : 1) * familyTrim(tr);
-    const boost = boostRef.current && trackId === visibleTrackRef.current ? BOOST_GAIN : 1;
-    apiRef.current.changeTrackVolume([tr], (sliderVal / 100) * gain * boost);
+    const bank = BANK_GAINS[soundBankRef.current] ?? BANK_GAINS.standard;
+    const isDrum = tr.staves?.some(s => s.isPercussion) || tr.playbackInfo?.primaryChannel === 9;
+    const gain = bank.program(tr.playbackInfo?.program ?? -1, isDrum) * familyTrim(tr);
+    apiRef.current.changeTrackVolume([tr], (sliderVal / 100) * gain *
+      (boostRef.current && trackId === visibleTrackRef.current ? BOOST_GAIN : 1));
   };
   const setTrackSynthVolumeRef = useRef(null);
   setTrackSynthVolumeRef.current = setTrackSynthVolume;
 
   const applyMasterVolume = (sliderVal) => {
     if (!apiRef.current) return;
-    apiRef.current.masterVolume = (sliderVal / 100) * (hqSoundRef.current ? HQ_MASTER_GAIN : 1);
+    const bank = BANK_GAINS[soundBankRef.current] ?? BANK_GAINS.standard;
+    apiRef.current.masterVolume = (sliderVal / 100) * bank.master;
   };
   const masterVolumeRef = useRef(masterVolume);
   useEffect(() => { masterVolumeRef.current = masterVolume; }, [masterVolume]);
   const applyMasterVolumeRef = useRef(null);
   applyMasterVolumeRef.current = applyMasterVolume;
 
-  // covers toggle and the failed-load revert; volumes are independent of the
+  // covers switch and the failed-load revert; volumes are independent of the
   // loaded font so this can run immediately
   useEffect(() => {
-    hqSoundRef.current = hqSound;
+    soundBankRef.current = soundBank;
     for (const t of tracksRef.current) setTrackSynthVolume(t.id, t.volume);
     applyMasterVolume(masterVolumeRef.current);
-  }, [hqSound]);
+  }, [soundBank]);
 
   // the boost follows the visible track — re-push volumes when either the
   // selection or the toggle changes
@@ -231,7 +265,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     for (const t of tracksRef.current) setTrackSynthVolume(t.id, t.volume);
   }, [boostSelected, visibleTrack]);
 
-  const soundfontSwapRef = useRef(null); // {wasPlaying} while a user-initiated soundfont swap is in flight
+  const soundfontSwapRef = useRef(null); // {wasPlaying, prevBank} while a user-initiated soundfont swap is in flight
 
   // A/V sync: positive = cursor/UI delayed (audio arrives late, e.g.
   // Bluetooth), negative = cursor runs ahead
@@ -309,7 +343,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           enableCursor: true,
           enableAnimatedBeatCursor: true,
           scrollMode: ScrollMode.Continuous,
-          soundFont: hqSound ? SOUNDFONTS.hq : SOUNDFONTS.standard,
+          soundFont: (SOUND_BANKS[soundBank] ?? SOUND_BANKS.standard).url,
           scrollElement: containerRef.current.parentElement,
         }
       };
@@ -391,13 +425,10 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         setSoundLoading(false);
         const failedSwap = soundfontSwapRef.current;
         soundfontSwapRef.current = null;
-        // the synth still has the previous font — flip the toggle back
+        // the synth still has the previous font — flip the selection back
         if (failedSwap) {
-          setHqSound(h => {
-            const reverted = !h;
-            try { localStorage.setItem(HQ_SOUND_KEY, reverted ? '1' : '0'); } catch (e2) {}
-            return reverted;
-          });
+          setSoundBank(failedSwap.prevBank);
+          try { localStorage.setItem(SOUND_BANK_KEY, failedSwap.prevBank); } catch (e2) {}
         }
       });
 
@@ -1007,14 +1038,18 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
 
   // Hot-swap the synthesizer soundfont; playback keeps the score, only the
   // instrument samples change
-  const handleHqSound = () => {
-    const next = !hqSound;
-    setHqSound(next);
-    try { localStorage.setItem(HQ_SOUND_KEY, next ? '1' : '0'); } catch (e) {}
+  const handleSoundBank = (id) => {
+    if (!SOUND_BANKS[id] || id === soundBank || soundLoading) return;
+    const prevBank = soundBank;
+    setSoundBank(id);
+    try {
+      localStorage.setItem(SOUND_BANK_KEY, id);
+      localStorage.removeItem(LEGACY_HQ_KEY);
+    } catch (e) {}
     if (apiRef.current) {
       setSoundLoading(true);
-      soundfontSwapRef.current = { wasPlaying: playingRef.current };
-      apiRef.current.loadSoundFontFromUrl(next ? SOUNDFONTS.hq : SOUNDFONTS.standard, false);
+      soundfontSwapRef.current = { wasPlaying: playingRef.current, prevBank };
+      apiRef.current.loadSoundFontFromUrl(SOUND_BANKS[id].url, false);
     }
   };
 
@@ -1227,9 +1262,9 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           )}
           {!editMode && (
             <SettingsMenu
-              hqSound={hqSound}
+              soundBank={soundBank}
               soundLoading={soundLoading}
-              onHqSound={handleHqSound}
+              onSoundBank={handleSoundBank}
               metronome={metronome}
               onMetronome={handleMetronome}
               countIn={countIn}

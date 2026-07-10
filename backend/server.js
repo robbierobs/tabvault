@@ -100,43 +100,61 @@ function scanMissing() {
   } catch (e) {}
 }
 
-// HQ soundfont: downloaded once from the source URL, cached inside the
-// library volume so it survives container updates, then served locally.
-const SOUNDFONT_CACHE = path.join(LIBRARY_PATH, '.cache', 'hq.sf2');
-const HQ_SOUNDFONT_URL = process.env.HQ_SOUNDFONT_URL
-  || 'https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2';
-let soundfontDownload = null; // in-flight download guard
+// Sound banks: each is downloaded once from its source URL, cached inside
+// the library volume so it survives container updates, then served locally.
+// SF2 and SF3 (vorbis-compressed) both use the RIFF container alphaTab reads.
+const SOUNDFONTS = {
+  hq: {
+    url: process.env.HQ_SOUNDFONT_URL
+      || 'https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2',
+    file: 'hq.sf2',
+  },
+  musescore: {
+    url: process.env.MUSESCORE_SOUNDFONT_URL
+      || 'https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3',
+    file: 'musescore.sf3',
+  },
+  // Arachno 1.0 was evaluated and rejected: alphaSynth renders pure NaN from
+  // it (verified on 1.8.3, 1.8.4 and 1.9.0-alpha.1860 — unfixed upstream).
+};
+const soundfontDownloads = {}; // id -> in-flight download guard
 
-async function ensureHqSoundfont() {
-  if (fs.existsSync(SOUNDFONT_CACHE)) return;
-  if (!soundfontDownload) {
-    soundfontDownload = (async () => {
-      console.log(`Downloading HQ soundfont: ${HQ_SOUNDFONT_URL}`);
-      const resp = await fetch(HQ_SOUNDFONT_URL);
+async function ensureSoundfont(id) {
+  const bank = SOUNDFONTS[id];
+  const cachePath = path.join(LIBRARY_PATH, '.cache', bank.file);
+  if (fs.existsSync(cachePath)) return cachePath;
+  if (!soundfontDownloads[id]) {
+    soundfontDownloads[id] = (async () => {
+      console.log(`Downloading soundfont ${id}: ${bank.url}`);
+      const resp = await fetch(bank.url);
       if (!resp.ok) throw new Error(`download failed (${resp.status})`);
       const buf = Buffer.from(await resp.arrayBuffer());
       if (buf.length < 4 || buf.toString('ascii', 0, 4) !== 'RIFF') {
         throw new Error('downloaded file is not a soundfont');
       }
-      fs.mkdirSync(path.dirname(SOUNDFONT_CACHE), { recursive: true });
-      fs.writeFileSync(SOUNDFONT_CACHE + '.tmp', buf);
-      fs.renameSync(SOUNDFONT_CACHE + '.tmp', SOUNDFONT_CACHE);
-      console.log(`HQ soundfont cached (${(buf.length / 1e6).toFixed(1)} MB)`);
-    })().finally(() => { soundfontDownload = null; });
+      fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+      fs.writeFileSync(cachePath + '.tmp', buf);
+      fs.renameSync(cachePath + '.tmp', cachePath);
+      console.log(`Soundfont ${id} cached (${(buf.length / 1e6).toFixed(1)} MB)`);
+    })().finally(() => { soundfontDownloads[id] = null; });
   }
-  return soundfontDownload;
+  await soundfontDownloads[id];
+  return cachePath;
 }
 
-app.get('/api/soundfont/hq', async (req, res) => {
+app.get('/api/soundfont/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!SOUNDFONTS[id]) return res.status(404).json({ error: 'Unknown sound bank' });
+  let cachePath;
   try {
-    await ensureHqSoundfont();
+    cachePath = await ensureSoundfont(id);
   } catch (e) {
-    console.error('HQ soundfont error:', e.message);
-    return res.status(502).json({ error: 'Could not fetch HQ soundfont: ' + e.message });
+    console.error(`Soundfont ${id} error:`, e.message);
+    return res.status(502).json({ error: `Could not fetch soundfont: ${e.message}` });
   }
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   res.setHeader('Content-Type', 'application/octet-stream');
-  res.sendFile(path.resolve(SOUNDFONT_CACHE));
+  res.sendFile(path.resolve(cachePath));
 });
 
 // ---- File versions: edits (e.g. tempo changes) are saved as new .gp files

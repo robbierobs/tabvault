@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import styles from './SettingsMenu.module.css';
 import { AV_SYNC_MIN, AV_SYNC_MAX, detectOutputLatency } from '../lib/avSync.js';
+import { SOUND_BANKS } from './Player.jsx';
 
 // Practice settings live behind one gear button: they're set-and-forget
 // toggles, not things flipped mid-song, so they don't earn header space.
 export default function SettingsMenu({
-  hqSound, soundLoading, onHqSound,
+  soundBank, soundLoading, onSoundBank,
   metronome, onMetronome,
   countIn, onCountIn,
   avSync, onAvSync,
@@ -36,7 +37,7 @@ export default function SettingsMenu({
   };
 
   // the gear lights up when any setting is away from its default
-  const active = hqSound || metronome || countIn || avSync !== 0;
+  const active = soundBank !== 'standard' || metronome || countIn || avSync !== 0;
 
   return (
     <div className={styles.wrap} ref={wrapRef}>
@@ -53,13 +54,28 @@ export default function SettingsMenu({
         <div className={styles.panel}>
           <div className={styles.title}>Sound &amp; practice</div>
 
-          <ToggleRow
-            label={soundLoading ? 'HQ sound (loading…)' : 'HQ sound'}
-            hint="Richer instrument samples (~32MB, downloaded once)"
-            checked={hqSound}
-            disabled={soundLoading}
-            onChange={onHqSound}
-          />
+          <div className={styles.subTitle}>Sound bank{soundLoading ? ' — loading…' : ''}</div>
+          <div className={styles.bankList} role="radiogroup">
+            {Object.entries(SOUND_BANKS).map(([id, bank]) => (
+              <button
+                key={id}
+                className={`${styles.bankRow} ${soundBank === id ? styles.bankActive : ''}`}
+                disabled={soundLoading}
+                onClick={() => onSoundBank(id)}
+                role="radio"
+                aria-checked={soundBank === id}
+              >
+                <span className={styles.bankRadio} />
+                <span className={styles.toggleText}>
+                  <span className={styles.toggleLabel}>{bank.label}</span>
+                  <span className={styles.toggleHint}>{bank.detail}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className={styles.divider} />
+
           <ToggleRow
             label="Metronome click"
             hint="Click track during playback"

@@ -66,6 +66,62 @@
   margin: 2px 0;
 }
 
+/* ---- sound bank picker ---- */
+
+.bankList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bankRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: 7px;
+  background: none;
+  border: 1px solid transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bankRow:hover:not(:disabled) {
+  background: var(--bg3);
+}
+
+.bankRow:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bankActive {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.bankRadio {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border2);
+  position: relative;
+}
+
+.bankActive .bankRadio {
+  border-color: var(--accent);
+}
+
+.bankActive .bankRadio::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 /* ---- toggle rows ---- */
 
 .toggleRow {
