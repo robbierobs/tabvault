@@ -188,6 +188,58 @@
   flex-shrink: 0;
 }
 
+.badgeBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.badgeBtn:disabled:hover {
+  color: var(--text3);
+  box-shadow: none;
+}
+
+.draftBanner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  background: rgba(74, 158, 255, 0.08);
+  border-bottom: 1px solid rgba(74, 158, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.draftText {
+  font-size: 11px;
+  color: var(--text2);
+}
+
+.draftResume {
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #4a9eff;
+  color: #fff;
+}
+
+.draftResume:hover {
+  background: #6cb0ff;
+}
+
+.draftDismiss {
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text3);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+}
+
+.draftDismiss:hover {
+  color: #e87a5a;
+  border-color: #e87a5a;
+}
+
 .iconBtn {
   display: flex;
   align-items: center;
@@ -287,6 +339,11 @@
     flex-wrap: wrap;
     padding: 8px 10px;
     gap: 4px 10px;
+  }
+
+  /* editing needs a physical keyboard — view-only on phones */
+  .editToggle {
+    display: none;
   }
 
   .menuBtn {
