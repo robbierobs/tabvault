@@ -330,3 +330,125 @@ test('insert/delete/restore beat preserves content exactly', async () => {
   assert.equal(reBeat.notes.length, before.notes.length);
   assert.equal(reBeat.notes.some(n => n.isPalmMute), true);
 });
+
+// ---- bar-fill normalization (GP semantics) ----------------------------------
+
+test('beatTicks matches alphaTab playbackDuration (plain, dotted, tuplet)', async () => {
+  const { beatTicks } = await import('../src/lib/editScore.js');
+  const score = load();
+  score.finish(settings);
+  let checked = 0;
+  for (const track of score.tracks) for (const staff of track.staves)
+    for (const bar of staff.bars) for (const voice of bar.voices)
+      for (const beat of voice.beats) {
+        if (beat.graceType) continue; // grace beats have no own playback span
+        assert.equal(beatTicks(beat), beat.playbackDuration,
+          `bar ${bar.index} beat ${beat.index} (dur ${beat.duration} dots ${beat.dots} tuplet ${beat.tupletNumerator}:${beat.tupletDenominator})`);
+        if (++checked > 2000) return;
+      }
+});
+
+test('normalizeVoice pads and consumes rests to the time signature', async () => {
+  const { normalizeVoice, beatTicks, barCapacityTicks, setBeatDuration, insertRestBeatAt, deleteBeat } =
+    await import('../src/lib/editScore.js');
+  const { createEmptyScore } = await import('../src/lib/newSong.js');
+  const score = createEmptyScore(at, { title: 'fill' }); // 8 empty 4/4 bars
+  const voice = score.tracks[0].staves[0].bars[0].voices[0];
+  const capacity = barCapacityTicks(voice.bar);
+  const sum = () => voice.beats.reduce((a, b) => a + beatTicks(b), 0);
+
+  // whole-rest bar → make it a note, shorten to quarter → padded back to full
+  setFret(at, voice.beats[0], 1, 5);
+  setBeatDuration(voice.beats[0], 4);
+  normalizeVoice(at, voice);
+  assert.equal(sum(), capacity, 'padded to capacity');
+  assert.equal(voice.beats[0].isRest, false);
+  assert.ok(voice.beats.slice(1).every(b => b.isRest), 'padding is rests');
+
+  // lengthen quarter → half: trailing rests are consumed
+  setBeatDuration(voice.beats[0], 2);
+  normalizeVoice(at, voice);
+  assert.equal(sum(), capacity, 'rests consumed on lengthen');
+
+  // insert a rest then normalize → still exactly full
+  insertRestBeatAt(at, voice, 1, 8);
+  normalizeVoice(at, voice);
+  assert.equal(sum(), capacity, 'full after insert');
+
+  // delete the first (note) beat → padded back to capacity
+  deleteBeat(voice, 0);
+  normalizeVoice(at, voice);
+  assert.equal(sum(), capacity, 'full after delete');
+
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+});
+
+test('normalizeVoice never deletes notes from an overfull bar', async () => {
+  const { normalizeVoice, beatTicks, barCapacityTicks, setBeatDuration, insertRestBeatAt } =
+    await import('../src/lib/editScore.js');
+  const { createEmptyScore } = await import('../src/lib/newSong.js');
+  const score = createEmptyScore(at, { title: 'overfull' });
+  const voice = score.tracks[0].staves[0].bars[0].voices[0];
+  // build a bar of exactly four quarter NOTES (converting padding rests to
+  // quarters one by one, the way a user would)
+  setFret(at, voice.beats[0], 1, 1);
+  setBeatDuration(voice.beats[0], 4);
+  normalizeVoice(at, voice);
+  setFret(at, voice.beats[1], 1, 2);
+  setBeatDuration(voice.beats[1], 4);
+  normalizeVoice(at, voice);
+  setFret(at, voice.beats[2], 1, 3);
+  setFret(at, voice.beats[3], 1, 4);
+  assert.equal(voice.beats.length, 4);
+  assert.ok(voice.beats.every(b => b.duration === 4 && !b.isRest));
+  // lengthen the first to a half — no rests to consume → overfull but intact
+  setBeatDuration(voice.beats[0], 2);
+  const { overfull } = normalizeVoice(at, voice);
+  assert.equal(overfull, true);
+  assert.equal(voice.beats.length, 4, 'no notes were deleted');
+});
+
+test('appendBar keeps masterBars parallel with every staff and round-trips', async () => {
+  const { appendBar, removeLastBar, beatTicks, barCapacityTicks } =
+    await import('../src/lib/editScore.js');
+  const score = load(); // multi-track library file
+  const mbBefore = score.masterBars.length;
+  const barCounts = () => score.tracks.flatMap(t => t.staves.map(s => s.bars.length));
+
+  appendBar(at, score);
+  assert.equal(score.masterBars.length, mbBefore + 1);
+  assert.ok(barCounts().every(c => c === mbBefore + 1), 'every staff gained a bar');
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+  // the new bar is exactly full of rests in every staff
+  for (const track of score.tracks) for (const staff of track.staves) {
+    const bar = staff.bars[staff.bars.length - 1];
+    for (const voice of bar.voices) {
+      const sum = voice.beats.reduce((a, b) => a + beatTicks(b), 0);
+      assert.equal(sum, barCapacityTicks(bar));
+      assert.ok(voice.beats.every(b => b.isRest));
+    }
+  }
+
+  const re = roundTrip(score);
+  assert.equal(re.masterBars.length, mbBefore + 1, 'survives export');
+
+  assert.equal(removeLastBar(score), true);
+  finalizeEdit(score, settings);
+  assert.equal(score.masterBars.length, mbBefore);
+  assert.ok(barCounts().every(c => c === mbBefore), 'undo restores every staff');
+});
+
+test('serializeVoice/restoreVoice round-trips exactly', async () => {
+  const { serializeVoice, restoreVoice } = await import('../src/lib/editScore.js');
+  const score = load();
+  const staff = firstStringedStaff(score);
+  const beat = findBeat(staff, b => b.notes.length > 0 && b.voice.beats.length >= 2);
+  const voice = beat.voice;
+  const before = serializeVoice(voice);
+  restoreVoice(at, voice, before);
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+  assert.deepEqual(serializeVoice(voice), before);
+});
