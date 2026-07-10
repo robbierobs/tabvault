@@ -173,8 +173,42 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const bytesRef = useRef(null);         // original file bytes
   const origTuningsRef = useRef({});     // track index -> tuning array from the file
   const origProgramsRef = useRef({});    // track index -> GM program from the file
+  const origInstrAutomationsRef = useRef({}); // track index -> automation values (traversal order)
   const instrumentOverridesRef = useRef({}); // track index -> overridden program
   const [instrumentOverrides, setInstrumentOverrides] = useState({});
+
+  // GP scores carry beat-level Instrument automations (alphaTab's finish()
+  // even inserts one on every track's first beat from playbackInfo.program)
+  // and they re-program the channel during playback — so an instrument swap
+  // must rewrite them too, or the file's program instantly wins back.
+  const forEachInstrumentAutomation = (track, fn) => {
+    const Instrument = atRef.current?.model?.AutomationType?.Instrument ?? 2;
+    for (const staff of track.staves ?? []) {
+      for (const bar of staff.bars ?? []) {
+        for (const voice of bar.voices ?? []) {
+          for (const beat of voice.beats ?? []) {
+            for (const a of beat.automations ?? []) {
+              if (a.type === Instrument) fn(a);
+            }
+          }
+        }
+      }
+    }
+  };
+
+  // set a track's program everywhere playback reads it; program === null
+  // restores the file's values (captured at load, traversal order is stable)
+  const applyProgramToTrack = (track, trackId, program) => {
+    if (program !== null) {
+      track.playbackInfo.program = program;
+      forEachInstrumentAutomation(track, (a) => { a.value = program; });
+    } else {
+      track.playbackInfo.program = origProgramsRef.current[trackId];
+      const orig = origInstrAutomationsRef.current[trackId] ?? [];
+      let i = 0;
+      forEachInstrumentAutomation(track, (a) => { if (i < orig.length) a.value = orig[i++]; });
+    }
+  };
   const reapplyMixerRef = useRef(false); // true while re-rendering for a tuning change
   const tracksRef = useRef([]);
   const [trackTunings, setTrackTunings] = useState({}); // current (possibly transformed)
@@ -574,8 +608,15 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         if (!reapplyMixerRef.current) {
           origTuningsRef.current = tunings;
           const programs = {};
-          (score.tracks || []).forEach((t, i) => { programs[i] = t.playbackInfo?.program ?? 0; });
+          const automations = {};
+          (score.tracks || []).forEach((t, i) => {
+            programs[i] = t.playbackInfo?.program ?? 0;
+            const vals = [];
+            forEachInstrumentAutomation(t, (a) => vals.push(a.value));
+            automations[i] = vals;
+          });
           origProgramsRef.current = programs;
+          origInstrAutomationsRef.current = automations;
         }
 
         // A tuning change re-renders the score; keep the mixer state instead
@@ -589,7 +630,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           if (overrides.length) {
             for (const [i, p] of overrides) {
               const tr = score.tracks?.[i];
-              if (tr?.playbackInfo) tr.playbackInfo.program = p;
+              if (tr?.playbackInfo) applyProgramToTrack(tr, Number(i), p);
             }
             try { api.loadMidiForScore(); } catch (e) {}
           }
@@ -797,18 +838,28 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     if (!tr?.playbackInfo) return;
     const target = program ?? origProgramsRef.current[trackId];
     if (target == null) return;
-    tr.playbackInfo.program = target;
+    applyProgramToTrack(tr, trackId, program);
     const next = { ...instrumentOverridesRef.current };
     if (program === null) delete next[trackId]; else next[trackId] = program;
     instrumentOverridesRef.current = next;
     setInstrumentOverrides(next);
     setTracks(ts => ts.map(t => t.id === trackId ? { ...t, program: target } : t));
+    // Regenerate the MIDI, then restart cleanly: stop first, and when it was
+    // playing resume BEFORE seeking — a playing seek silently fast-forwards
+    // through the channel-setup events, while a paused seek skips them and
+    // a resumed burst of skipped notes is what caused the audible glitching.
+    // Worst case is the intended brief pause/change/play.
     try {
       const wasPlaying = playingRef.current;
       const pos = api.tickPosition;
+      api.stop();
       api.loadMidiForScore();
-      if (pos > 0) api.tickPosition = pos;
-      if (wasPlaying) api.play();
+      if (wasPlaying) {
+        api.play();
+        if (pos > 0) api.tickPosition = pos;
+      } else if (pos > 0) {
+        api.tickPosition = pos;
+      }
     } catch (e) {}
     // the per-program bank gains follow the new instrument
     setTrackSynthVolume(trackId, tracksRef.current[trackId]?.volume ?? 100);
@@ -1016,7 +1067,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         for (const [k, p] of Object.entries(saved.instruments)) {
           const tr = api.score?.tracks?.[k];
           if (tr?.playbackInfo && typeof p === 'number') {
-            tr.playbackInfo.program = p;
+            applyProgramToTrack(tr, Number(k), p);
             restored[k] = p;
           }
         }
