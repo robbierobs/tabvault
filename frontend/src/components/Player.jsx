@@ -38,7 +38,8 @@ export const SOUND_BANKS = {
     url: '/api/soundfont/musescore',
   },
   // Arachno 1.0 was evaluated and rejected: alphaSynth renders pure NaN
-  // (silence) from it despite a well-formed sfbk — see project notes.
+  // (silence) from it despite a well-formed sfbk — verified on 1.8.3, 1.8.4
+  // and 1.9.0-alpha.1860, so it's an unfixed upstream bug. See project notes.
 };
 const SOUND_BANK_KEY = 'tabvault-sound-bank';
 const LEGACY_HQ_KEY = 'tabvault-hq-sound'; // pre-bank boolean toggle

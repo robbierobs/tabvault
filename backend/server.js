@@ -114,7 +114,8 @@ const SOUNDFONTS = {
       || 'https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3',
     file: 'musescore.sf3',
   },
-  // Arachno 1.0 was evaluated and rejected: alphaSynth renders NaN from it.
+  // Arachno 1.0 was evaluated and rejected: alphaSynth renders pure NaN from
+  // it (verified on 1.8.3, 1.8.4 and 1.9.0-alpha.1860 — unfixed upstream).
 };
 const soundfontDownloads = {}; // id -> in-flight download guard
 
