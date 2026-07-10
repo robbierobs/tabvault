@@ -6,7 +6,17 @@
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+/* the tool groups may scroll on narrow windows; .right stays pinned */
+.scroll {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .group {
@@ -15,6 +25,7 @@
   gap: 3px;
   padding-right: 10px;
   border-right: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .btn {
@@ -51,6 +62,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .right {
@@ -58,6 +70,7 @@
   align-items: center;
   gap: 6px;
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .status {
@@ -70,6 +83,114 @@
 .statusError {
   color: #e87a5a;
 }
+
+/* ---- dropdown menus (Bar ▾ / Track ▾) ----
+   Triggers live inside the scroll area whose overflow would clip an
+   absolutely-positioned child, so panels are fixed at JS-captured coords. */
+
+.menuWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.menuPanel {
+  position: fixed;
+  width: 280px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 12px;
+  z-index: 120;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.menuTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menuSubTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  margin-top: 2px;
+}
+
+.menuDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
+}
+
+.menuRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.menuBtn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text2);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.menuBtn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border2);
+}
+
+.menuBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.menuBtn.active {
+  color: #4a9eff;
+  border-color: #4a9eff;
+  background: rgba(74, 158, 255, 0.12);
+}
+
+.menuBtn.danger:hover:not(:disabled) {
+  color: #e87a5a;
+  border-color: #e87a5a;
+}
+
+.menuInput {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+}
+
+.menuInput:focus {
+  border-color: var(--accent);
+}
+
+.menuHint {
+  font-size: 10px;
+  color: var(--text3);
+  line-height: 1.4;
+}
+
+/* ---- save-as-version (pinned right, normal absolute anchoring) ---- */
 
 .saveWrap {
   position: relative;
@@ -112,40 +233,7 @@
   gap: 8px;
 }
 
-.saveTitle {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.saveRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.saveInput {
-  flex: 1;
-  background: var(--bg4);
-  border: 1px solid var(--border2);
-  border-radius: 5px;
-  color: var(--text);
-  font-size: 12px;
-  padding: 4px 8px;
-  outline: none;
-}
-
-.saveInput:focus {
-  border-color: var(--accent);
-}
-
 .saveError {
   font-size: 11px;
   color: #e87a5a;
-}
-
-.saveHint {
-  font-size: 10px;
-  color: var(--text3);
-  line-height: 1.4;
 }

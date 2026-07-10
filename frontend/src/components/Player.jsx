@@ -4,7 +4,7 @@ import TrackMixer from './TrackMixer.jsx';
 import PlaybackControls from './PlaybackControls.jsx';
 import LoopBar from './LoopBar.jsx';
 import TuningControls from './TuningControls.jsx';
-import AvSyncControls from './AvSyncControls.jsx';
+import SettingsMenu from './SettingsMenu.jsx';
 import EditToolbar from './EditToolbar.jsx';
 import EditCaret from './EditCaret.jsx';
 import { useEditor } from '../lib/useEditor.js';
@@ -66,7 +66,7 @@ const headerSelectStyle = {
   maxWidth: '160px',
 };
 
-export default function Player({ file, version = 0, onVersionChange, onMetaLoaded, onToggleSidebar }) {
+export default function Player({ file, version = 0, onVersionChange, onMetaLoaded, onToggleSidebar, onEditingChange }) {
   const containerRef = useRef(null);
   const apiRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -131,6 +131,14 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   // snapshot (ed) for the toolbar and caret.
   const [editMode, setEditMode] = useState(false);
   const [draftMeta, setDraftMeta] = useState(null); // server-side draft slot
+
+  // Edit mode swaps the practice chrome (library, mixer, loop bar, sound
+  // settings) for the editing chrome — App hides the sidebar off this signal.
+  // The cleanup covers the save-as-version remount, which unmounts mid-edit.
+  useEffect(() => {
+    onEditingChange?.(editMode);
+    return () => onEditingChange?.(false);
+  }, [editMode]);
   const [savingEditVersion, setSavingEditVersion] = useState(false);
   const [editSaveError, setEditSaveError] = useState(null);
   const { editor, ed } = useEditor({
@@ -1063,7 +1071,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   return (
     <div className={styles.player}>
       <div className={styles.header}>
-        {onToggleSidebar && (
+        {onToggleSidebar && !editMode && (
           <button className={styles.menuBtn} onClick={onToggleSidebar} title="Library">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M3 6h18M3 12h18M3 18h18"/>
@@ -1136,7 +1144,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           </div>
         </div>
         <div className={styles.headerRight}>
-          {versions.length > 0 && (
+          {!editMode && versions.length > 0 && (
             <>
               <select
                 style={headerSelectStyle}
@@ -1196,7 +1204,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
               ))}
             </select>
           )}
-          {tracks.length > 0 && (
+          {!editMode && tracks.length > 0 && (
             <button
               className={`${styles.iconBtn} ${styles.mobileOnly} ${mixerOpen ? styles.active : ''}`}
               onClick={() => setMixerOpen(o => !o)}
@@ -1205,23 +1213,19 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
               <MixerIcon /><span>Mixer</span>
             </button>
           )}
-          <AvSyncControls offset={avSync} onChange={handleAvSync} />
-          <button
-            className={`${styles.iconBtn} ${hqSound ? styles.active : ''}`}
-            onClick={handleHqSound}
-            disabled={soundLoading}
-            title={hqSound
-              ? 'HQ sound on (GeneralUser GS soundfont) — click for standard'
-              : 'Switch to HQ sound — richer instrument samples (~32MB, downloaded once)'}
-          >
-            <HqSoundIcon /><span>{soundLoading ? 'Loading…' : 'HQ Sound'}</span>
-          </button>
-          <button className={`${styles.iconBtn} ${metronome ? styles.active : ''}`} onClick={handleMetronome} title="Metronome">
-            <MetronomeIcon /><span>Click</span>
-          </button>
-          <button className={`${styles.iconBtn} ${countIn ? styles.active : ''}`} onClick={handleCountIn} title="Count in">
-            <CountInIcon /><span>Count In</span>
-          </button>
+          {!editMode && (
+            <SettingsMenu
+              hqSound={hqSound}
+              soundLoading={soundLoading}
+              onHqSound={handleHqSound}
+              metronome={metronome}
+              onMetronome={handleMetronome}
+              countIn={countIn}
+              onCountIn={handleCountIn}
+              avSync={avSync}
+              onAvSync={handleAvSync}
+            />
+          )}
         </div>
       </div>
 
@@ -1249,17 +1253,19 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         </div>
       )}
 
-      <LoopBar
-        enabled={loopEnabled}
-        onToggle={handleLoopToggle}
-        start={loopStart}
-        end={loopEnd}
-        total={totalBars}
-        currentBar={currentBar}
-        progress={progress}
-        onRangeChange={handleLoopRange}
-        onRangeCommit={handleLoopRangeCommit}
-      />
+      {!editMode && (
+        <LoopBar
+          enabled={loopEnabled}
+          onToggle={handleLoopToggle}
+          start={loopStart}
+          end={loopEnd}
+          total={totalBars}
+          currentBar={currentBar}
+          progress={progress}
+          onRangeChange={handleLoopRange}
+          onRangeCommit={handleLoopRangeCommit}
+        />
+      )}
 
       <div className={styles.body}>
         <div className={styles.scoreWrap}>
@@ -1277,7 +1283,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           <div ref={containerRef} className={styles.atContainer} />
           {editMode && <EditCaret caret={ed.caret} />}
         </div>
-        {tracks.length > 0 && (
+        {tracks.length > 0 && !editMode && (
           <>
             {mixerOpen && (
               <div className={styles.mixerBackdrop} onClick={() => setMixerOpen(false)} />
@@ -1343,29 +1349,3 @@ function MixerIcon() {
   );
 }
 
-function HqSoundIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M2 12h2l2-7 3 14 3-10 2 5 2-2h6" />
-    </svg>
-  );
-}
-
-function MetronomeIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polygon points="12 2 2 19.8 22 19.8"/>
-      <line x1="12" y1="2" x2="17" y2="13"/>
-      <line x1="12" y1="19.8" x2="12" y2="14"/>
-    </svg>
-  );
-}
-
-function CountInIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="10"/>
-      <path d="M12 6v6l4 2"/>
-    </svg>
-  );
-}
