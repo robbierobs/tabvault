@@ -45,6 +45,15 @@ const HQ_MASTER_GAIN = 1.7;
 const BOOST_KEY = 'tabvault-boost-selected';
 const BOOST_GAIN = 1.1;
 
+// GP files often carry garbage bytes in track names
+function sanitizeTrackName(name, i) {
+  if (!name) return `Track ${i + 1}`;
+  // strip the replacement character and non-printable ranges
+  const cleaned = name.replace(new RegExp('[\\uFFFD\\u0000-\\u001F\\u0080-\\u009F]', 'g'), '').trim();
+  if (!cleaned || /^[\d\s\W]+$/.test(cleaned)) return `Track ${i + 1}`;
+  return cleaned;
+}
+
 const headerSelectStyle = {
   background: 'var(--bg4)',
   border: '1px solid var(--border2)',
@@ -132,6 +141,8 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     beforeRender: () => { reapplyMixerRef.current = true; },
     fileName: file.name,
     getVersion: () => version,
+    getVisibleTrack: () => visibleTrackRef.current,
+    onTracksChanged: (event) => refreshTracksRef.current?.(event),
   });
 
   useEffect(() => {
@@ -918,10 +929,60 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
 
   const handleVisibleTrack = (trackId) => {
     setVisibleTrack(trackId);
-    if (editMode) editor.clearSelection(); // the selection's staff is leaving the screen
+    visibleTrackRef.current = trackId;
+    if (editMode) {
+      editor.clearSelection(); // the selection's staff is leaving the screen
+      editor.refresh(); // toolbar trackInfo follows the visible track
+    }
     if (apiRef.current?.score?.tracks?.[trackId]) {
       apiRef.current.renderTracks([apiRef.current.score.tracks[trackId]]);
     }
+  };
+
+  // Edit-mode track ops (add/remove/rename/instrument) change the score's
+  // track list out from under React — rebuild the mixer/select state from
+  // the live score, keeping existing volume/mute/solo where tracks survive.
+  const refreshTracksFromScore = ({ added = null, removed = null } = {}) => {
+    const api = apiRef.current;
+    if (!api?.score) return;
+    setTracks(prev => api.score.tracks.map((t, i) => {
+      // map new index -> old index so surviving tracks keep their mixer state
+      const oldIndex = removed !== null ? (i < removed ? i : i + 1) : i;
+      const existing = prev[oldIndex];
+      return {
+        id: i,
+        name: sanitizeTrackName(t.name, i),
+        volume: existing?.volume ?? 100,
+        muted: existing?.muted ?? false,
+        solo: existing?.solo ?? false,
+        color: TRACK_COLORS[i % TRACK_COLORS.length],
+        isDrum: t.isPercussion || (t.playbackInfo && t.playbackInfo.program === 0 && t.playbackInfo.primaryChannel === 9),
+      };
+    }));
+    if (added !== null) {
+      // jump to the new track so the user can write on it right away
+      setTrackSynthVolume(added, 100);
+      setVisibleTrack(added);
+      if (editMode) editor.clearSelection();
+      api.renderTracks([api.score.tracks[added]]);
+    } else if (removed !== null) {
+      const current = visibleTrackRef.current;
+      const next = Math.min(current === removed ? removed : current - (current > removed ? 1 : 0),
+        api.score.tracks.length - 1);
+      setVisibleTrack(Math.max(0, next));
+      api.renderTracks([api.score.tracks[Math.max(0, next)]]);
+    }
+  };
+  const refreshTracksRef = useRef(null);
+  refreshTracksRef.current = refreshTracksFromScore;
+
+  const handleRemoveTrack = () => {
+    const api = apiRef.current;
+    const idx = visibleTrack;
+    const track = api?.score?.tracks?.[idx];
+    if (!track || api.score.tracks.length <= 1) return;
+    if (!confirm(`Delete track "${track.name}" and all its notes? This cannot be undone.`)) return;
+    editor.removeTrack(idx);
   };
 
   // Hot-swap the synthesizer soundfont; playback keeps the score, only the
@@ -1173,6 +1234,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           onSaveVersion={handleSaveEditVersion}
           onDiscard={discardDraft}
           onExit={toggleEdit}
+          onRemoveTrack={handleRemoveTrack}
         />
       )}
 

@@ -11,7 +11,13 @@ import {
   setFret, removeNoteOnString, setRest, setBeatDuration, setBeatDots, setNoteProp,
   insertRestBeatAt, deleteBeat, finalizeEdit,
   normalizeVoice, serializeVoice, restoreVoice, appendBar, removeLastBar,
+  insertRestBar, removeBarAt, serializeFullBar, restoreFullBar,
+  setTimeSignatureRun, restoreTimeSignatureRun,
+  addTrack, removeTrackAt,
 } from './editScore.js';
+
+// commands the Player must react to (track list / rendered-track changes)
+const TRACK_KINDS = new Set(['addTrack', 'trackName', 'trackProgram']);
 
 // rhythm edits change how a bar fills — the edited voice is re-normalized to
 // its time-signature capacity and undo restores the whole voice snapshot
@@ -138,6 +144,12 @@ export class EditorController {
     if (!this._selection) return;
     this._closeDigitBuffer();
     this._selection = null;
+    this._emit();
+  }
+
+  // re-publish the snapshot after external state the editor mirrors changes
+  // (e.g. the Player switched the visible track)
+  refresh() {
     this._emit();
   }
 
@@ -341,6 +353,99 @@ export class EditorController {
     this._apply({ kind: 'noteProp', path: { ...this._selection }, string, prop, value });
   }
 
+  // ---- track management (Phase 4) ------------------------------------------
+  // Track commands target the Player's visible track (opts.getVisibleTrack),
+  // not the selection; the Player refreshes its track list/rendering via the
+  // onTracksChanged callback fired after each apply/undo/redo.
+
+  addNewTrack({ name, program, strings }) {
+    this._apply({ kind: 'addTrack', path: this._selection ? { ...this._selection } : { barIndex: 0 }, name, program, strings });
+  }
+
+  renameTrack(name) {
+    const trackIndex = this.opts.getVisibleTrack?.() ?? 0;
+    const track = this.opts.getApi()?.score?.tracks[trackIndex];
+    if (!track || !name?.trim() || track.name === name.trim()) return;
+    this._apply({ kind: 'trackName', path: this._selection ? { ...this._selection } : { barIndex: 0 }, trackIndex, value: name.trim() });
+  }
+
+  setTrackInstrument(program) {
+    const trackIndex = this.opts.getVisibleTrack?.() ?? 0;
+    const track = this.opts.getApi()?.score?.tracks[trackIndex];
+    if (!track || track.playbackInfo.program === program) return;
+    this._apply({ kind: 'trackProgram', path: this._selection ? { ...this._selection } : { barIndex: 0 }, trackIndex, value: program });
+  }
+
+  // NOT undoable: removing a track shifts every track index, invalidating
+  // selection paths and recorded commands — history is cleared instead.
+  removeTrack(trackIndex) {
+    const api = this.opts.getApi();
+    if (!api?.score || !removeTrackAt(api.score, trackIndex)) return false;
+    this._undo = [];
+    this._redo = [];
+    this._selection = null;
+    this._closeDigitBuffer();
+    finalizeEdit(api.score, api.settings);
+    this._scoreDirty = true;
+    this._midiDirty = true;
+    this._draftDirty = true;
+    this._draftStatus = 'dirty';
+    this._scheduleAutosave();
+    this.opts.onTracksChanged?.({ removed: trackIndex }); // Player re-renders
+    this._emit();
+    return true;
+  }
+
+  _trackEventFor(cmd, inverted) {
+    const api = this.opts.getApi();
+    if (cmd.kind === 'addTrack') {
+      return inverted
+        ? { removed: api.score.tracks.length } // the just-popped last index
+        : { added: api.score.tracks.length - 1 };
+    }
+    return {};
+  }
+
+  // ---- bar operations (Phase 3) -------------------------------------------
+
+  insertBar(where) { // 'before' | 'after'
+    const beat = this.selectedBeat();
+    if (!beat) return;
+    const index = this._selection.barIndex + (where === 'after' ? 1 : 0);
+    this._apply({ kind: 'insertBar', path: { ...this._selection }, at: index });
+    this._selection = { ...this._selection, barIndex: index, beatIndex: 0 };
+    this._emit();
+  }
+
+  deleteSelectedBar() {
+    const api = this.opts.getApi();
+    if (!api?.score || api.score.masterBars.length <= 1 || !this._selection) return;
+    this._apply({ kind: 'deleteBar', path: { ...this._selection } });
+    this._clampSelection();
+    this._emit();
+  }
+
+  setTimeSignature(numerator, denominator) {
+    const beat = this.selectedBeat();
+    if (!beat) return;
+    const mb = beat.voice.bar.masterBar;
+    if (mb.timeSignatureNumerator === numerator && mb.timeSignatureDenominator === denominator) return;
+    this._apply({ kind: 'timeSig', path: { ...this._selection }, numerator, denominator });
+    this._clampSelection();
+    this._emit();
+  }
+
+  toggleRepeat(which) { // 'start' | 'end'
+    const beat = this.selectedBeat();
+    if (!beat) return;
+    const mb = beat.voice.bar.masterBar;
+    if (which === 'start') {
+      this._apply({ kind: 'repeat', path: { ...this._selection }, prop: 'isRepeatStart', value: !mb.isRepeatStart });
+    } else {
+      this._apply({ kind: 'repeat', path: { ...this._selection }, prop: 'repeatCount', value: mb.repeatCount > 0 ? 0 : 2 });
+    }
+  }
+
   insertBeatAfterSelection() {
     const beat = this.selectedBeat();
     if (!beat) return;
@@ -368,6 +473,7 @@ export class EditorController {
     if (this._undo.length > UNDO_CAP) this._undo.shift();
     this._redo = [];
     this._afterMutation(cmd.path.barIndex);
+    if (TRACK_KINDS.has(cmd.kind)) this.opts.onTracksChanged?.(this._trackEventFor(cmd, false));
   }
 
   _voiceAtPath(score, path) {
@@ -383,6 +489,45 @@ export class EditorController {
     if (!api?.score || !at) return false;
     if (cmd.kind === 'appendBar') {
       appendBar(at, api.score);
+      return true;
+    }
+    if (cmd.kind === 'insertBar') {
+      insertRestBar(at, api.score, cmd.at);
+      return true;
+    }
+    if (cmd.kind === 'deleteBar') {
+      if (api.score.masterBars.length <= 1) return false;
+      const snapshot = serializeFullBar(api.score, cmd.path.barIndex);
+      if (!removeBarAt(api.score, cmd.path.barIndex)) return false;
+      if (!cmd.barSnapshot) cmd.barSnapshot = snapshot;
+      return true;
+    }
+    if (cmd.kind === 'timeSig') {
+      const before = setTimeSignatureRun(at, api.score, cmd.path.barIndex, cmd.numerator, cmd.denominator);
+      if (!cmd.tsBefore) cmd.tsBefore = before;
+      return before.length > 0;
+    }
+    if (cmd.kind === 'repeat') {
+      const mb = api.score.masterBars[cmd.path.barIndex];
+      if (!mb) return false;
+      if (cmd.oldValue === undefined) cmd.oldValue = mb[cmd.prop];
+      mb[cmd.prop] = cmd.value;
+      return true;
+    }
+    if (cmd.kind === 'addTrack') {
+      addTrack(at, api.score, cmd);
+      return true;
+    }
+    if (cmd.kind === 'trackName' || cmd.kind === 'trackProgram') {
+      const track = api.score.tracks[cmd.trackIndex];
+      if (!track) return false;
+      if (cmd.kind === 'trackName') {
+        if (cmd.oldValue === undefined) cmd.oldValue = track.name;
+        track.name = cmd.value;
+      } else {
+        if (cmd.oldValue === undefined) cmd.oldValue = track.playbackInfo.program;
+        track.playbackInfo.program = cmd.value;
+      }
       return true;
     }
     if (NORMALIZED_KINDS.has(cmd.kind)) {
@@ -454,6 +599,33 @@ export class EditorController {
     if (cmd.kind === 'appendBar') {
       return removeLastBar(api.score);
     }
+    if (cmd.kind === 'insertBar') {
+      return removeBarAt(api.score, cmd.at);
+    }
+    if (cmd.kind === 'deleteBar') {
+      restoreFullBar(at, api.score, cmd.path.barIndex, cmd.barSnapshot);
+      return true;
+    }
+    if (cmd.kind === 'timeSig') {
+      restoreTimeSignatureRun(at, api.score, cmd.tsBefore);
+      return true;
+    }
+    if (cmd.kind === 'repeat') {
+      const mb = api.score.masterBars[cmd.path.barIndex];
+      if (!mb) return false;
+      mb[cmd.prop] = cmd.oldValue;
+      return true;
+    }
+    if (cmd.kind === 'addTrack') {
+      return removeTrackAt(api.score, api.score.tracks.length - 1);
+    }
+    if (cmd.kind === 'trackName' || cmd.kind === 'trackProgram') {
+      const track = api.score.tracks[cmd.trackIndex];
+      if (!track) return false;
+      if (cmd.kind === 'trackName') track.name = cmd.oldValue;
+      else track.playbackInfo.program = cmd.oldValue;
+      return true;
+    }
     if (NORMALIZED_KINDS.has(cmd.kind)) {
       const voice = this._voiceAtPath(api.score, cmd.path);
       if (!voice || !cmd.voiceBefore) return false;
@@ -489,6 +661,7 @@ export class EditorController {
     this._selection = { ...cmd.path, string: cmd.string ?? this._selection?.string ?? cmd.path.string ?? 1 };
     this._clampSelection();
     this._afterMutation(cmd.path.barIndex);
+    if (TRACK_KINDS.has(cmd.kind)) this.opts.onTracksChanged?.(this._trackEventFor(cmd, true));
   }
 
   redo() {
@@ -500,13 +673,19 @@ export class EditorController {
     this._selection = { ...cmd.path, string: cmd.string ?? this._selection?.string ?? cmd.path.string ?? 1 };
     this._clampSelection();
     this._afterMutation(cmd.path.barIndex);
+    if (TRACK_KINDS.has(cmd.kind)) this.opts.onTracksChanged?.(this._trackEventFor(cmd, false));
   }
 
-  // after undoing an append the selected beat may not exist anymore — walk
-  // back to the nearest live beat in the voice, or drop the selection
+  // after structural edits (bar delete, undo of an append) the selected
+  // position may not exist anymore — walk back to the nearest live beat
   _clampSelection() {
     const api = this.opts.getApi();
     if (!api?.score || !this._selection) return;
+    const last = api.score.masterBars.length - 1;
+    if (this._selection.barIndex > last) {
+      this._selection.barIndex = last;
+      this._selection.beatIndex = 0;
+    }
     while (this._selection.beatIndex > 0 && !beatAtPath(api.score, this._selection)) {
       this._selection.beatIndex--;
     }
@@ -673,7 +852,25 @@ export class EditorController {
   _buildSnapshot() {
     const beat = this._enabled ? this.selectedBeat() : null;
     const note = beat && this._selection?.string ? noteOnString(beat, this._selection.string) : null;
+    const mb = beat?.voice.bar.masterBar;
+    const api = this.opts.getApi();
+    const visibleTrack = this._enabled ? (this.opts.getVisibleTrack?.() ?? 0) : 0;
+    const track = this._enabled ? api?.score?.tracks[visibleTrack] : null;
     return {
+      trackInfo: track ? {
+        index: visibleTrack,
+        name: track.name,
+        program: track.playbackInfo.program,
+        count: api.score.tracks.length,
+      } : null,
+      barInfo: mb ? {
+        index: mb.index,
+        count: this.opts.getApi()?.score?.masterBars.length ?? 0,
+        numerator: mb.timeSignatureNumerator,
+        denominator: mb.timeSignatureDenominator,
+        repeatStart: mb.isRepeatStart,
+        repeatEnd: mb.repeatCount > 0,
+      } : null,
       enabled: this._enabled,
       selection: this._selection ? { ...this._selection } : null,
       caret: this._enabled ? this.getCaretRect() : null,
