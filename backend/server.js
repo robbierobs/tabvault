@@ -222,6 +222,68 @@ app.delete('/api/version/:filename/:v', (req, res) => {
   res.json({ success: true });
 });
 
+// ---- Draft slot: edit mode autosaves the in-progress score here. One draft
+// per file, stored inside .versions/<file>/ so it's invisible to the library
+// scan and cleaned up by DELETE /api/file. Promoting a draft to a permanent
+// version goes through the normal POST /api/version.
+function draftPath(filename) {
+  return path.join(versionsDir(filename), 'draft.gp');
+}
+function draftMetaPath(filename) {
+  return path.join(versionsDir(filename), 'draft.json');
+}
+
+app.post('/api/draft/:filename', express.raw({ type: 'application/octet-stream', limit: '32mb' }), (req, res) => {
+  const filePath = safeLibraryPath(res, req.params.filename);
+  if (!filePath) return;
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+  if (!req.body || req.body.length < 4) return res.status(400).json({ error: 'Empty body' });
+  if (req.body.toString('ascii', 0, 2) !== 'PK') {
+    return res.status(400).json({ error: 'Body is not a .gp file' });
+  }
+  fs.mkdirSync(versionsDir(req.params.filename), { recursive: true });
+  // tmp+rename so an interrupted autosave never truncates the previous draft
+  const target = draftPath(req.params.filename);
+  fs.writeFileSync(target + '.tmp', req.body);
+  fs.renameSync(target + '.tmp', target);
+  const meta = {
+    base: Number(req.query.base) || 0,
+    updatedAt: new Date().toISOString(),
+    size: req.body.length,
+  };
+  fs.writeFileSync(draftMetaPath(req.params.filename), JSON.stringify(meta));
+  res.json(meta);
+});
+
+app.get('/api/draft/:filename/meta', (req, res) => {
+  const filePath = safeLibraryPath(res, req.params.filename);
+  if (!filePath) return;
+  if (!fs.existsSync(draftPath(req.params.filename))) {
+    return res.status(404).json({ error: 'No draft' });
+  }
+  try {
+    res.json(JSON.parse(fs.readFileSync(draftMetaPath(req.params.filename), 'utf8')));
+  } catch (e) {
+    res.status(404).json({ error: 'No draft' });
+  }
+});
+
+app.get('/api/draft/:filename', (req, res) => {
+  const filePath = safeLibraryPath(res, req.params.filename);
+  if (!filePath) return;
+  const draft = draftPath(req.params.filename);
+  if (!fs.existsSync(draft)) return res.status(404).json({ error: 'No draft' });
+  res.sendFile(draft);
+});
+
+app.delete('/api/draft/:filename', (req, res) => {
+  const filePath = safeLibraryPath(res, req.params.filename);
+  if (!filePath) return;
+  try { fs.unlinkSync(draftPath(req.params.filename)); } catch (e) {}
+  try { fs.unlinkSync(draftMetaPath(req.params.filename)); } catch (e) {}
+  res.json({ success: true });
+});
+
 // List all GP files in library with metadata
 app.get('/api/library', (req, res) => {
   scanMissing();

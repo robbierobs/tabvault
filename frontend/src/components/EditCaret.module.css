@@ -1,0 +1,10 @@
+.caret {
+  position: absolute;
+  border: 1.5px solid #4a9eff;
+  border-radius: 4px;
+  background: rgba(74, 158, 255, 0.15);
+  box-shadow: 0 0 6px rgba(74, 158, 255, 0.4);
+  pointer-events: none;
+  z-index: 40;
+  transition: left 0.08s ease-out, top 0.08s ease-out, width 0.08s ease-out;
+}

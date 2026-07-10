@@ -5,6 +5,9 @@ import PlaybackControls from './PlaybackControls.jsx';
 import LoopBar from './LoopBar.jsx';
 import TuningControls from './TuningControls.jsx';
 import AvSyncControls from './AvSyncControls.jsx';
+import EditToolbar from './EditToolbar.jsx';
+import EditCaret from './EditCaret.jsx';
+import { useEditor } from '../lib/useEditor.js';
 import { tuningLabel, refingerScore, shiftScorePitch, semitoneShift } from '../lib/tuning.js';
 import { scaleScoreTempo, exportScoreGp } from '../lib/editing.js';
 import { createSyncedCursorHandler, loadAvSync, saveAvSync } from '../lib/avSync.js';
@@ -114,11 +117,32 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const [versionError, setVersionError] = useState(null);
   const tempoWrapRef = useRef(null);
 
+  // Edit mode (Phase 1: note entry). The controller owns selection, undo and
+  // draft-autosave state and mutates the live score; React only mirrors its
+  // snapshot (ed) for the toolbar and caret.
+  const [editMode, setEditMode] = useState(false);
+  const [draftMeta, setDraftMeta] = useState(null); // server-side draft slot
+  const [savingEditVersion, setSavingEditVersion] = useState(false);
+  const [editSaveError, setEditSaveError] = useState(null);
+  const { editor, ed } = useEditor({
+    getApi: () => apiRef.current,
+    getAt: () => atRef.current,
+    getContainer: () => containerRef.current,
+    getPristineBytes: () => bytesRef.current,
+    beforeRender: () => { reapplyMixerRef.current = true; },
+    fileName: file.name,
+    getVersion: () => version,
+  });
+
   useEffect(() => {
     let alive = true;
     fetch(`/api/versions/${encodeURIComponent(file.name)}`)
       .then(r => r.ok ? r.json() : { versions: [] })
       .then(d => { if (alive) setVersions(d.versions || []); })
+      .catch(() => {});
+    fetch(`/api/draft/${encodeURIComponent(file.name)}/meta`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (alive) setDraftMeta(d); })
       .catch(() => {});
     return () => { alive = false; };
   }, [file.name]);
@@ -232,6 +256,8 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           fontDirectory: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/font/',
           logLevel: 1,
         scriptFile: '/assets/alphaTab.mjs',
+          // per-note bounds power edit-mode hit-testing (click → string)
+          includeNoteBounds: true,
         },
         display: {
           layoutMode: LayoutMode.Page,
@@ -532,6 +558,8 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
 
   const togglePlay = () => {
     if (!apiRef.current) return;
+    // edits only re-render visually — regenerate the playback MIDI lazily
+    editor.refreshMidiIfDirty();
     // alphaTab resumes its own suspended AudioContext on play (user gesture)
     apiRef.current.playPause();
   };
@@ -676,8 +704,10 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     }
   };
 
-  // Persist the chosen version alongside practice state, then remount via App
-  const switchVersion = (v) => {
+  // Persist the chosen version alongside practice state, then remount via App.
+  // Unsaved draft edits are flushed first so switching versions never loses work.
+  const switchVersion = async (v) => {
+    try { await editor.flushDraft(); } catch (e) {}
     try {
       const st = loadSongState(file.name) || {};
       saveSongState(file.name, { ...st, version: v });
@@ -730,6 +760,77 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
       setVersionError(e.message || String(e));
     } finally {
       setSavingVersion(false);
+    }
+  };
+
+  // ---- edit mode ----------------------------------------------------------
+
+  const toggleEdit = () => {
+    if (editMode) {
+      editor.disable(); // flushes any unsaved draft
+      setEditMode(false);
+      return;
+    }
+    // tuning overrides are a view transform on pristine bytes; editing works
+    // on the file's actual notes, so the override must come off first
+    if (tuningTarget) {
+      if (!confirm("Editing changes the file's actual notes — reset the tuning view first?")) return;
+      applyTuning(null, tuningMode);
+    }
+    setEditMode(true);
+    editor.enable();
+  };
+
+  // load the server draft into the player and continue editing it
+  const resumeDraft = async () => {
+    const api = apiRef.current;
+    if (!api) return;
+    try {
+      const resp = await fetch(`/api/draft/${encodeURIComponent(file.name)}`);
+      if (!resp.ok) { setDraftMeta(null); return; }
+      const draftBytes = new Uint8Array(await resp.arrayBuffer());
+      try { api.stop(); } catch (e) {}
+      api.load(draftBytes);
+      editor.markDraftLoaded();
+      setEditMode(true);
+      editor.enable();
+    } catch (e) {
+      console.error('Draft resume failed', e);
+    }
+  };
+
+  const discardDraft = async () => {
+    if (!confirm('Discard all draft edits? This cannot be undone.')) return;
+    await editor.discardDraft();
+    setDraftMeta(null);
+  };
+
+  // promote the edited score to a permanent version, drop the draft slot,
+  // and remount on the new version (which also exits edit mode)
+  const handleSaveEditVersion = async (label) => {
+    const api = apiRef.current;
+    const at = atRef.current;
+    if (!api?.score || !at) return;
+    setSavingEditVersion(true);
+    setEditSaveError(null);
+    try {
+      const bytes = exportScoreGp(at, api.score, api.settings);
+      const resp = await fetch(
+        `/api/version/${encodeURIComponent(file.name)}?label=${encodeURIComponent((label || 'edited').trim() || 'edited')}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }
+      );
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `Save failed (${resp.status})`);
+      }
+      const entry = await resp.json();
+      editor.markSavedAsVersion();
+      try { await fetch(`/api/draft/${encodeURIComponent(file.name)}`, { method: 'DELETE' }); } catch (e) {}
+      switchVersion(entry.v);
+    } catch (e) {
+      setEditSaveError(e.message || String(e));
+    } finally {
+      setSavingEditVersion(false);
     }
   };
 
@@ -817,6 +918,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
 
   const handleVisibleTrack = (trackId) => {
     setVisibleTrack(trackId);
+    if (editMode) editor.clearSelection(); // the selection's staff is leaving the screen
     if (apiRef.current?.score?.tracks?.[trackId]) {
       apiRef.current.renderTracks([apiRef.current.score.tracks[trackId]]);
     }
@@ -915,12 +1017,15 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
               <span className={styles.tempoWrap} ref={tempoWrapRef}>
                 <button
                   className={`${styles.badge} ${styles.badgeBtn}`}
+                  disabled={editMode || ed.scoreDirty}
                   onClick={() => {
                     setTempoDraft(String(tempo));
                     setVersionError(null);
                     setTempoOpen(o => !o);
                   }}
-                  title="Change the song's tempo (saved as a new version)"
+                  title={editMode || ed.scoreDirty
+                    ? 'Tempo changes are unavailable while the song has draft edits'
+                    : "Change the song's tempo (saved as a new version)"}
                 >
                   {tempo} BPM ✎
                 </button>
@@ -999,15 +1104,26 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
               )}
             </>
           )}
-          <TuningControls
-            originalTunings={originalTuning}
-            originalLabel={originalTuningLabel}
-            currentLabel={currentTuningLabel}
-            target={tuningTarget}
-            mode={tuningMode}
-            outOfRange={tuningOutOfRange}
-            onApply={applyTuning}
-          />
+          <button
+            className={`${styles.iconBtn} ${styles.editToggle} ${editMode ? styles.active : ''}`}
+            onClick={toggleEdit}
+            title={editMode ? 'Leave edit mode (draft is kept)' : 'Edit the tab — notes, durations, rests'}
+          >
+            <EditIcon /><span>Edit</span>
+          </button>
+          {/* tuning is a view transform over pristine bytes — it would wipe
+              draft edits, so it hides while the score has any */}
+          {!editMode && !ed.scoreDirty && (
+            <TuningControls
+              originalTunings={originalTuning}
+              originalLabel={originalTuningLabel}
+              currentLabel={currentTuningLabel}
+              target={tuningTarget}
+              mode={tuningMode}
+              outOfRange={tuningOutOfRange}
+              onApply={applyTuning}
+            />
+          )}
           {tracks.length > 1 && (
             <select
               style={headerSelectStyle}
@@ -1048,6 +1164,29 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         </div>
       </div>
 
+      {editMode && (
+        <EditToolbar
+          ed={ed}
+          editor={editor}
+          saving={savingEditVersion}
+          saveError={editSaveError}
+          onSaveVersion={handleSaveEditVersion}
+          onDiscard={discardDraft}
+          onExit={toggleEdit}
+        />
+      )}
+
+      {draftMeta && !editMode && !ed.scoreDirty && (
+        <div className={styles.draftBanner}>
+          <span className={styles.draftText}>
+            Unsaved draft edits from {new Date(draftMeta.updatedAt).toLocaleString()}
+            {draftMeta.base > 0 ? ` (based on v${draftMeta.base})` : ''}
+          </span>
+          <button className={styles.draftResume} onClick={resumeDraft}>Resume editing</button>
+          <button className={styles.draftDismiss} onClick={discardDraft}>Discard</button>
+        </div>
+      )}
+
       <LoopBar
         enabled={loopEnabled}
         onToggle={handleLoopToggle}
@@ -1074,6 +1213,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
             </div>
           )}
           <div ref={containerRef} className={styles.atContainer} />
+          {editMode && <EditCaret caret={ed.caret} />}
         </div>
         {tracks.length > 0 && (
           <>
@@ -1118,6 +1258,14 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         onRampStep={setRampStep}
       />
     </div>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+    </svg>
   );
 }
 
