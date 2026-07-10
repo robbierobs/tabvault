@@ -370,3 +370,43 @@
     padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
 }
+
+.newSongBtn {
+  margin: 0 12px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text2);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+}
+
+.newSongBtn:hover {
+  color: var(--text);
+  border-color: var(--border2);
+}
+
+.newSongForm {
+  margin: 0 12px 12px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: var(--bg3);
+  border-radius: 7px;
+}
+
+.newSongRow {
+  display: flex;
+  gap: 5px;
+}
+
+.newSongRow input {
+  width: 64px;
+  flex: 0 0 auto;
+}
