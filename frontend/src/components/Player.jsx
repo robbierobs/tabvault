@@ -24,15 +24,15 @@ const SOUNDFONTS = {
 };
 const HQ_SOUND_KEY = 'tabvault-hq-sound';
 
-// GeneralUser GS masters its guitar presets far quieter than sonivox — the
-// distortion preset attenuates the low-string range (where drop-tuned riffs
-// live) by ~23dB vs sonivox's ~5dB, while its bass is actually hotter. Boost
-// guitar tracks at the synth channel (mixer UI stays 0-100) when HQ is on.
+// GeneralUser GS masters some presets far from sonivox's levels. Values are
+// calibrated against live per-track RMS (solo each track, both fonts,
+// 2026-07-10): distortion needs a big lift, pick bass measured 6dB under
+// sonivox, and everything else lands at parity from HQ_MASTER_GAIN alone —
+// the old blanket 24-31 boost made overdrive/clean guitars ~5-7dB too loud.
 // Linear amplitude factors; the source material has >20dB headroom.
 function hqProgramGain(program) {
-  if (program === 30) return 3.5;               // distortion guitar ≈ +11dB
-  if (program === 29) return 2.0;               // overdrive guitar ≈ +6dB
-  if (program >= 24 && program <= 31) return 1.8; // other guitars ≈ +5dB
+  if (program === 30) return 3.0; // distortion guitar ≈ +9.5dB
+  if (program === 34) return 2.0; // pick bass ≈ +6dB
   return 1;
 }
 // GeneralUser is also mastered ~5dB quieter overall (headroom); lift the
@@ -40,10 +40,21 @@ function hqProgramGain(program) {
 // compensated HQ mix right at the sonivox mix level.
 const HQ_MASTER_GAIN = 1.7;
 
-// "Boost selected": the track whose tab is on screen gets +10% so it sits
-// slightly in front of the backing tracks while practicing
+// Both soundfonts mix bass ~4-13dB and drums ~5-9dB above the rhythm guitars
+// (measured per-track RMS), which buries the part being practiced. Trim those
+// families at the synth channel in every font; the mixer UI stays 0-100.
+function familyTrim(track) {
+  if (track.staves?.some(s => s.isPercussion) || track.playbackInfo?.primaryChannel === 9) return 0.7; // drums ≈ −3dB
+  const p = track.playbackInfo?.program ?? -1;
+  if (p >= 32 && p <= 39) return 0.65; // basses ≈ −3.7dB
+  return 1;
+}
+
+// "Boost selected": the track whose tab is on screen gets +3.5dB so it sits
+// audibly in front of the backing tracks while practicing (the old ×1.1 was
+// +0.8dB — below the level-difference threshold most ears can detect)
 const BOOST_KEY = 'tabvault-boost-selected';
-const BOOST_GAIN = 1.1;
+const BOOST_GAIN = 1.5;
 
 // GP files often carry garbage bytes in track names
 function sanitizeTrackName(name, i) {
@@ -182,11 +193,12 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const visibleTrackRef = useRef(visibleTrack);
 
   // Single place that pushes a track's volume to the synth: mixer slider
-  // (0-100) times the HQ guitar compensation times the selected-track boost
+  // (0-100) times the family trim times the HQ program compensation times
+  // the selected-track boost
   const setTrackSynthVolume = (trackId, sliderVal) => {
     const tr = apiRef.current?.score?.tracks?.[trackId];
     if (!tr) return;
-    const gain = hqSoundRef.current ? hqProgramGain(tr.playbackInfo?.program ?? -1) : 1;
+    const gain = (hqSoundRef.current ? hqProgramGain(tr.playbackInfo?.program ?? -1) : 1) * familyTrim(tr);
     const boost = boostRef.current && trackId === visibleTrackRef.current ? BOOST_GAIN : 1;
     apiRef.current.changeTrackVolume([tr], (sliderVal / 100) * gain * boost);
   };

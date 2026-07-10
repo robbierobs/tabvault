@@ -18,8 +18,8 @@ export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTra
             className={`${styles.boostBtn} ${boostSelected ? styles.boostActive : ''}`}
             onClick={onToggleBoost}
             title={boostSelected
-              ? 'Selected track boosted +10% — click to disable'
-              : 'Boost the selected track +10% so it sits in front of the mix'}
+              ? 'Selected track boosted +3.5dB — click to disable'
+              : 'Boost the selected track +3.5dB so it sits in front of the mix'}
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M12 19V5M5 12l7-7 7 7"/>
