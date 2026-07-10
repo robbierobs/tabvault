@@ -1,6 +1,6 @@
 {
   "name": "tabvault-backend",
-  "version": "1.9.1",
+  "version": "1.10.0",
   "description": "TabVault - self-hosted Guitar Pro file player",
   "main": "server.js",
   "scripts": {
