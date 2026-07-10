@@ -93,6 +93,25 @@ const BANK_GAINS = {
 // lib/audioTuning.js for the measured defaults.
 const BOOST_KEY = 'tabvault-boost-selected';
 
+// GM programs offered as per-track playback overrides in the mixer. Like the
+// tuning feature this never touches the file — it swaps the synth instrument
+// (e.g. hear an Overdriven part with the Distortion preset) and persists in
+// the per-song practice state.
+export const MIXER_INSTRUMENTS = [
+  ['Guitars', [
+    [24, 'Nylon Guitar'], [25, 'Steel Guitar'], [26, 'Jazz Electric'],
+    [27, 'Clean Electric'], [28, 'Muted Electric'], [29, 'Overdriven'],
+    [30, 'Distortion'], [31, 'Harmonics'],
+  ]],
+  ['Basses', [
+    [32, 'Acoustic Bass'], [33, 'Fingered Bass'], [34, 'Picked Bass'],
+    [35, 'Fretless Bass'], [36, 'Slap Bass 1'], [37, 'Slap Bass 2'],
+    [38, 'Synth Bass 1'], [39, 'Synth Bass 2'],
+  ]],
+];
+const PROGRAM_NAMES = new Map(MIXER_INSTRUMENTS.flatMap(([, list]) => list));
+export const programName = (p) => PROGRAM_NAMES.get(p) ?? `Program ${p}`;
+
 // GP files often carry garbage bytes in track names
 function sanitizeTrackName(name, i) {
   if (!name) return `Track ${i + 1}`;
@@ -153,6 +172,9 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const atRef = useRef(null);            // alphaTab module
   const bytesRef = useRef(null);         // original file bytes
   const origTuningsRef = useRef({});     // track index -> tuning array from the file
+  const origProgramsRef = useRef({});    // track index -> GM program from the file
+  const instrumentOverridesRef = useRef({}); // track index -> overridden program
+  const [instrumentOverrides, setInstrumentOverrides] = useState({});
   const reapplyMixerRef = useRef(false); // true while re-rendering for a tuning change
   const tracksRef = useRef([]);
   const [trackTunings, setTrackTunings] = useState({}); // current (possibly transformed)
@@ -551,12 +573,26 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         setTrackTunings(tunings);
         if (!reapplyMixerRef.current) {
           origTuningsRef.current = tunings;
+          const programs = {};
+          (score.tracks || []).forEach((t, i) => { programs[i] = t.playbackInfo?.program ?? 0; });
+          origProgramsRef.current = programs;
         }
 
         // A tuning change re-renders the score; keep the mixer state instead
         // of rebuilding it, and push it back onto the fresh score
         if (reapplyMixerRef.current) {
           reapplyMixerRef.current = false;
+          // the fresh score was re-parsed from pristine bytes — instrument
+          // overrides live outside the file, so put them back before the
+          // volumes (the per-program gains depend on them)
+          const overrides = Object.entries(instrumentOverridesRef.current);
+          if (overrides.length) {
+            for (const [i, p] of overrides) {
+              const tr = score.tracks?.[i];
+              if (tr?.playbackInfo) tr.playbackInfo.program = p;
+            }
+            try { api.loadMidiForScore(); } catch (e) {}
+          }
           for (const t of tracksRef.current) {
             const tr = score.tracks?.[t.id];
             if (!tr) continue;
@@ -583,6 +619,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           muted: false,
           solo: false,
           color: TRACK_COLORS[i % TRACK_COLORS.length],
+          program: t.playbackInfo?.program ?? 0,
           isDrum: t.isPercussion || (t.playbackInfo && t.playbackInfo.program === 0 && t.playbackInfo.primaryChannel === 9),
         }));
         setTracks(trackList);
@@ -751,6 +788,32 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     });
   };
 
+  // Per-track playback instrument override (mixer). Like tuning, this never
+  // touches the file: it swaps the live score's program and regenerates the
+  // playback MIDI. program === null restores the file's instrument.
+  const handleTrackInstrument = (trackId, program) => {
+    const api = apiRef.current;
+    const tr = api?.score?.tracks?.[trackId];
+    if (!tr?.playbackInfo) return;
+    const target = program ?? origProgramsRef.current[trackId];
+    if (target == null) return;
+    tr.playbackInfo.program = target;
+    const next = { ...instrumentOverridesRef.current };
+    if (program === null) delete next[trackId]; else next[trackId] = program;
+    instrumentOverridesRef.current = next;
+    setInstrumentOverrides(next);
+    setTracks(ts => ts.map(t => t.id === trackId ? { ...t, program: target } : t));
+    try {
+      const wasPlaying = playingRef.current;
+      const pos = api.tickPosition;
+      api.loadMidiForScore();
+      if (pos > 0) api.tickPosition = pos;
+      if (wasPlaying) api.play();
+    } catch (e) {}
+    // the per-program bank gains follow the new instrument
+    setTrackSynthVolume(trackId, tracksRef.current[trackId]?.volume ?? 100);
+  };
+
   // Apply (or clear) a temporary tuning change. Re-parses the original file
   // bytes, transforms the fresh score, and re-renders — the file on disk is
   // never touched.
@@ -866,6 +929,13 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
       if (!confirm("Editing changes the file's actual notes — reset the tuning view first?")) return;
       applyTuning(null, tuningMode);
     }
+    // instrument overrides mutate the live score, which "Save as version"
+    // would bake into the file — reset them before editing
+    const overridden = Object.keys(instrumentOverridesRef.current).map(Number);
+    if (overridden.length) {
+      if (!confirm('Mixer instrument overrides are playback-only — reset them before editing?')) return;
+      for (const i of overridden) handleTrackInstrument(i, null);
+    }
     setEditMode(true);
     editor.enable();
   };
@@ -938,6 +1008,26 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         setRampTarget(saved.ramp.target || 100);
       }
 
+      // instrument overrides go first: set the ref before any tuning
+      // re-render (whose reapply path reads it), and before the volume
+      // pushes (whose bank gains depend on the program)
+      if (saved.instruments && typeof saved.instruments === 'object') {
+        const restored = {};
+        for (const [k, p] of Object.entries(saved.instruments)) {
+          const tr = api.score?.tracks?.[k];
+          if (tr?.playbackInfo && typeof p === 'number') {
+            tr.playbackInfo.program = p;
+            restored[k] = p;
+          }
+        }
+        if (Object.keys(restored).length) {
+          instrumentOverridesRef.current = restored;
+          setInstrumentOverrides(restored);
+          setTracks(list => list.map((t, i) => restored[i] != null ? { ...t, program: restored[i] } : t));
+          try { api.loadMidiForScore(); } catch (e) {}
+        }
+      }
+
       const vt = saved.visibleTrack ?? 0;
       const hasTrack = !!api.score?.tracks?.[vt];
       if (saved.tuning?.tunings && hasTrack) {
@@ -998,12 +1088,13 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           ? { name: tuningTarget.name, tunings: tuningTarget.tunings, custom: !!tuningTarget.custom, mode: tuningMode }
           : null,
         tracks: tracks.map(t => ({ volume: t.volume, muted: t.muted, solo: t.solo })),
+        instruments: Object.keys(instrumentOverrides).length ? instrumentOverrides : undefined,
         visibleTrack,
         version,
       });
     }, 500);
     return () => clearTimeout(id);
-  }, [speed, loopEnabled, loopStart, loopEnd, rampEnabled, rampStep, rampTarget, tuningTarget, tuningMode, tracks, visibleTrack, file.name, version]);
+  }, [speed, loopEnabled, loopStart, loopEnd, rampEnabled, rampStep, rampTarget, tuningTarget, tuningMode, tracks, instrumentOverrides, visibleTrack, file.name, version]);
 
   const handleVisibleTrack = (trackId) => {
     setVisibleTrack(trackId);
@@ -1377,6 +1468,9 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
                 onSelectTrack={handleVisibleTrack}
                 boostSelected={boostSelected}
                 onToggleBoost={() => setBoostSelected(b => !b)}
+                instrumentOverrides={instrumentOverrides}
+                originalPrograms={origProgramsRef.current}
+                onTrackInstrument={handleTrackInstrument}
               />
             </div>
           </>
