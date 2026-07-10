@@ -1,7 +1,12 @@
 import React from 'react';
 import styles from './TrackMixer.module.css';
+import { MIXER_INSTRUMENTS, programName } from './Player.jsx';
 
-export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTrackVolume, onTrackMute, onTrackSolo, visibleTrack, onSelectTrack, boostSelected, onToggleBoost }) {
+export default function TrackMixer({
+  tracks, masterVolume, onMasterVolume, onTrackVolume, onTrackMute, onTrackSolo,
+  visibleTrack, onSelectTrack, boostSelected, onToggleBoost,
+  instrumentOverrides = {}, originalPrograms = {}, onTrackInstrument,
+}) {
   return (
     <div className={styles.mixer}>
       <div className={styles.header}>
@@ -67,6 +72,27 @@ export default function TrackMixer({ tracks, masterVolume, onMasterVolume, onTra
               <div className={styles.dot} style={{ background: track.color }} />
               <span className={styles.trackName}>{track.name}</span>
             </div>
+            {/* playback-only instrument swap (never edits the file) */}
+            {!track.isDrum && onTrackInstrument && (
+              <select
+                className={`${styles.instrumentSelect} ${instrumentOverrides[track.id] != null ? styles.instrumentOverridden : ''}`}
+                value={instrumentOverrides[track.id] != null ? String(instrumentOverrides[track.id]) : 'orig'}
+                onChange={e => onTrackInstrument(track.id, e.target.value === 'orig' ? null : parseInt(e.target.value, 10))}
+                onClick={e => e.stopPropagation()}
+                title="Playback instrument for this track (the file is unchanged)"
+              >
+                <option value="orig">
+                  {`Original · ${programName(originalPrograms[track.id] ?? track.program)}`}
+                </option>
+                {MIXER_INSTRUMENTS.map(([group, list]) => (
+                  <optgroup key={group} label={group}>
+                    {list.map(([p, label]) => (
+                      <option key={p} value={p}>{label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            )}
             <div className={styles.trackControls}>
               <input
                 type="range"
