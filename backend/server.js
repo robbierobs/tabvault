@@ -114,9 +114,47 @@ const SOUNDFONTS = {
       || 'https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3',
     file: 'musescore.sf3',
   },
-  // Arachno 1.0 was evaluated and rejected: alphaSynth renders pure NaN from
-  // it (verified on 1.8.3, 1.8.4 and 1.9.0-alpha.1860 — unfixed upstream).
+  // alphaSynth (through 1.9.0-alpha.1860) renders pure NaN from Arachno's
+  // stereo-linked PCM sample pairs (shdr types 2/4 + sampleLink). Rewriting
+  // the pairs as mono samples fixes playback — the L/R zones and their pan
+  // generators are untouched, so the stereo image survives via panning.
+  arachno: {
+    url: process.env.ARACHNO_SOUNDFONT_URL
+      || 'https://archive.org/download/free-soundfonts-sf2-2019-04/Arachno_SoundFont_Version_1.0.sf2',
+    file: 'arachno.sf2',
+    sanitize: monoizeStereoSamples,
+  },
 };
+
+// Rewrite stereo-linked sample headers (type 2 = right, 4 = left) as mono
+// and clear their sampleLink. Walks the RIFF tree to find pdta/shdr —
+// searching bytes would false-positive inside the PCM sample data.
+function monoizeStereoSamples(buf) {
+  let shdr = null;
+  const walk = (off, end) => {
+    while (off + 8 <= end) {
+      const id = buf.toString('ascii', off, off + 4);
+      const size = buf.readUInt32LE(off + 4);
+      const body = off + 8;
+      if (id === 'RIFF' || id === 'LIST') walk(body + 4, body + size);
+      else if (id === 'shdr') shdr = { off: body, size };
+      off = body + size + (size % 2);
+    }
+  };
+  walk(0, buf.length);
+  if (!shdr) return buf;
+  let touched = 0;
+  for (let o = shdr.off; o + 46 <= shdr.off + shdr.size; o += 46) {
+    const type = buf.readUInt16LE(o + 44);
+    if (type === 2 || type === 4) {
+      buf.writeUInt16LE(0, o + 42); // sampleLink
+      buf.writeUInt16LE(1, o + 44); // type -> mono
+      touched++;
+    }
+  }
+  if (touched) console.log(`Sanitized ${touched} stereo-linked samples to mono`);
+  return buf;
+}
 const soundfontDownloads = {}; // id -> in-flight download guard
 
 async function ensureSoundfont(id) {
@@ -128,10 +166,11 @@ async function ensureSoundfont(id) {
       console.log(`Downloading soundfont ${id}: ${bank.url}`);
       const resp = await fetch(bank.url);
       if (!resp.ok) throw new Error(`download failed (${resp.status})`);
-      const buf = Buffer.from(await resp.arrayBuffer());
+      let buf = Buffer.from(await resp.arrayBuffer());
       if (buf.length < 4 || buf.toString('ascii', 0, 4) !== 'RIFF') {
         throw new Error('downloaded file is not a soundfont');
       }
+      if (bank.sanitize) buf = bank.sanitize(buf);
       fs.mkdirSync(path.dirname(cachePath), { recursive: true });
       fs.writeFileSync(cachePath + '.tmp', buf);
       fs.renameSync(cachePath + '.tmp', cachePath);

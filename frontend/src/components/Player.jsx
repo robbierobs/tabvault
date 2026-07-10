@@ -37,9 +37,14 @@ export const SOUND_BANKS = {
     detail: '38 MB, downloaded once',
     url: '/api/soundfont/musescore',
   },
-  // Arachno 1.0 was evaluated and rejected: alphaSynth renders pure NaN
-  // (silence) from it despite a well-formed sfbk — verified on 1.8.3, 1.8.4
-  // and 1.9.0-alpha.1860, so it's an unfixed upstream bug. See project notes.
+  // alphaSynth NaNs on Arachno's stereo-linked PCM samples (bug through
+  // 1.9.0-alpha.1860) — the backend monoizes those headers at download time,
+  // which is why this bank must come from /api and never a direct URL.
+  arachno: {
+    label: 'Arachno',
+    detail: '148 MB, downloaded once',
+    url: '/api/soundfont/arachno',
+  },
 };
 const SOUND_BANK_KEY = 'tabvault-sound-bank';
 const LEGACY_HQ_KEY = 'tabvault-hq-sound'; // pre-bank boolean toggle
@@ -70,6 +75,12 @@ const BANK_GAINS = {
   musescore: {
     master: 1,
     program: (p, drum) => (drum ? 0.45 : p === 29 ? 3.5 : p === 30 ? 3.2 : p === 33 ? 1.6 : 1),
+  },
+  // Arachno: mastered hot across the board — overdrive +17dB over sonivox
+  // (hard-clipping peaks), distortion +9dB, pick bass +5dB
+  arachno: {
+    master: 0.85,
+    program: (p) => (p === 29 ? 0.17 : p === 30 ? 0.42 : p === 33 ? 1.15 : p === 34 ? 0.66 : 1),
   },
 };
 
