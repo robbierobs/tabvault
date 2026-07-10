@@ -240,3 +240,93 @@ test('appendRestBeat/removeBeat round-trip and respect the one-beat floor', () =
   const single = findBeat(staff, b => b.voice.beats.length === 1)?.voice;
   if (single) assert.equal(removeBeat(single, 0), false, 'never empties a voice');
 });
+
+// ---- Phase 2: note effects + beat structure --------------------------------
+
+test('note effects round-trip through export (PM, dead, vibrato, let ring)', async (t) => {
+  const { setNoteProp, NOTE_PROPS } = await import('../src/lib/editScore.js');
+  const score = load();
+  const staff = firstStringedStaff(score);
+  const beat = findBeat(staff, b => b.notes.length > 0);
+  const string = beat.notes[0].string;
+
+  for (const key of ['palmMute', 'dead', 'letRing', 'staccato']) {
+    const { oldValue } = setNoteProp(beat, string, NOTE_PROPS[key], true);
+    assert.equal(oldValue, false, key);
+  }
+  setNoteProp(beat, string, NOTE_PROPS.vibrato, 1);
+  assert.equal(setNoteProp(beat, 99, NOTE_PROPS.palmMute, true), null, 'missing note → null');
+  finalizeEdit(score, settings);
+
+  const p = pathForBeat(beat);
+  const re = roundTrip(score);
+  const n = noteOnString(beatAtPath(re, p), string);
+  assert.equal(n.isPalmMute, true);
+  assert.equal(n.isDead, true);
+  assert.equal(n.isLetRing, true);
+  assert.equal(n.isStaccato, true);
+  assert.equal(n.vibrato, 1);
+});
+
+test('tie and hammer/pull chains resolve after finish and survive export', async () => {
+  const { setNoteProp, NOTE_PROPS } = await import('../src/lib/editScore.js');
+  const score = load();
+  const staff = firstStringedStaff(score);
+  // two consecutive beats with a note on the same string
+  let pair = null;
+  outer: for (const bar of staff.bars) for (const v of bar.voices) for (const bt of v.beats) {
+    const nb = bt.nextBeat;
+    if (!bt.notes.length || !nb?.notes?.length || nb.voice !== bt.voice && nb.voice.bar.staff !== staff) continue;
+    for (const n of bt.notes) if (nb.notes.some(x => x.string === n.string)) { pair = { a: bt, b: nb, string: n.string }; break outer; }
+  }
+  assert.ok(pair, 'needs consecutive same-string notes');
+
+  setNoteProp(pair.a, pair.string, NOTE_PROPS.hammerPull, true);
+  setNoteProp(pair.b, pair.string, NOTE_PROPS.tie, true);
+  finalizeEdit(score, settings);
+  assert.ok(noteOnString(pair.b, pair.string).tieOrigin, 'tie origin resolved');
+  assert.ok(noteOnString(pair.a, pair.string).hammerPullDestination, 'h/p destination resolved');
+
+  const pa = pathForBeat(pair.a);
+  const pb = pathForBeat(pair.b);
+  const re = roundTrip(score);
+  assert.equal(noteOnString(beatAtPath(re, pa), pair.string).isHammerPullOrigin, true);
+  assert.equal(noteOnString(beatAtPath(re, pb), pair.string).isTieDestination, true);
+});
+
+test('insert/delete/restore beat preserves content exactly', async () => {
+  const { insertRestBeatAt, deleteBeat, restoreBeat, serializeBeat, setNoteProp, NOTE_PROPS } =
+    await import('../src/lib/editScore.js');
+  const score = load();
+  const staff = firstStringedStaff(score);
+  const beat = findBeat(staff, b => b.notes.length >= 2 && b.voice.beats.length >= 2);
+  assert.ok(beat, 'needs a chord beat in a multi-beat voice');
+  const voice = beat.voice;
+  setNoteProp(beat, beat.notes[0].string, NOTE_PROPS.palmMute, true);
+  const index = beat.index;
+  const before = serializeBeat(beat);
+  const lenBefore = voice.beats.length;
+
+  // insert a rest after it, finish, then remove it again
+  insertRestBeatAt(at, voice, index + 1, 8);
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+  assert.equal(voice.beats.length, lenBefore + 1);
+  assert.equal(voice.beats[index + 1].isRest, true);
+  assert.equal(deleteBeat(voice, index + 1) !== null, true);
+
+  // delete the real beat and restore it from its snapshot
+  const snapshot = deleteBeat(voice, index);
+  assert.deepEqual(snapshot, before);
+  restoreBeat(at, voice, index, snapshot);
+  finalizeEdit(score, settings);
+  assertInvariants(score);
+  assert.deepEqual(serializeBeat(voice.beats[index]), before);
+
+  // survives export
+  const p = { trackIndex: staff.track.index, staffIndex: staff.index, barIndex: voice.bar.index, voiceIndex: voice.index, beatIndex: index };
+  const re = roundTrip(score);
+  const reBeat = beatAtPath(re, p);
+  assert.equal(reBeat.notes.length, before.notes.length);
+  assert.equal(reBeat.notes.some(n => n.isPalmMute), true);
+});
