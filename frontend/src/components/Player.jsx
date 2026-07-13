@@ -121,6 +121,12 @@ function sanitizeTrackName(name, i) {
   return cleaned;
 }
 
+// A track can only be shown as tablature if it has a stringed staff —
+// rendering a stringless track (organ, synth pads, …) with the Tab stave
+// profile crashes alphaTab's layout with zero visible staves.
+const trackHasTab = (t) =>
+  !!(t?.staves || []).find(s => !s.isPercussion && s.stringTuning?.tunings?.length);
+
 const headerSelectStyle = {
   background: 'var(--bg4)',
   border: '1px solid var(--border2)',
@@ -662,6 +668,10 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
           color: TRACK_COLORS[i % TRACK_COLORS.length],
           program: t.playbackInfo?.program ?? 0,
           isDrum: t.isPercussion || (t.playbackInfo && t.playbackInfo.program === 0 && t.playbackInfo.primaryChannel === 9),
+          // keyboard/synth tracks have no string tuning — rendering them with
+          // the Tab stave profile crashes alphaTab's layout (zero visible
+          // staves), so like drums they're audible but not viewable as tab
+          hasTab: tunings[i] !== null,
         }));
         setTracks(trackList);
 
@@ -1080,7 +1090,8 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
       }
 
       const vt = saved.visibleTrack ?? 0;
-      const hasTrack = !!api.score?.tracks?.[vt];
+      // pre-fix song states may remember a stringless track — never render it
+      const hasTrack = !!api.score?.tracks?.[vt] && trackHasTab(api.score.tracks[vt]);
       if (saved.tuning?.tunings && hasTrack) {
         setVisibleTrack(vt);
         applyTuning(
@@ -1148,15 +1159,15 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   }, [speed, loopEnabled, loopStart, loopEnd, rampEnabled, rampStep, rampTarget, tuningTarget, tuningMode, tracks, instrumentOverrides, visibleTrack, file.name, version]);
 
   const handleVisibleTrack = (trackId) => {
+    const track = apiRef.current?.score?.tracks?.[trackId];
+    if (!track || !trackHasTab(track)) return; // Tab layout can't render it
     setVisibleTrack(trackId);
     visibleTrackRef.current = trackId;
     if (editMode) {
       editor.clearSelection(); // the selection's staff is leaving the screen
       editor.refresh(); // toolbar trackInfo follows the visible track
     }
-    if (apiRef.current?.score?.tracks?.[trackId]) {
-      apiRef.current.renderTracks([apiRef.current.score.tracks[trackId]]);
-    }
+    apiRef.current.renderTracks([track]);
   };
 
   // Edit-mode track ops (add/remove/rename/instrument) change the score's
@@ -1177,6 +1188,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         solo: existing?.solo ?? false,
         color: TRACK_COLORS[i % TRACK_COLORS.length],
         isDrum: t.isPercussion || (t.playbackInfo && t.playbackInfo.program === 0 && t.playbackInfo.primaryChannel === 9),
+        hasTab: trackHasTab(t),
       };
     }));
     if (added !== null) {
@@ -1187,10 +1199,16 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
       api.renderTracks([api.score.tracks[added]]);
     } else if (removed !== null) {
       const current = visibleTrackRef.current;
-      const next = Math.min(current === removed ? removed : current - (current > removed ? 1 : 0),
+      let next = Math.min(current === removed ? removed : current - (current > removed ? 1 : 0),
         api.score.tracks.length - 1);
-      setVisibleTrack(Math.max(0, next));
-      api.renderTracks([api.score.tracks[Math.max(0, next)]]);
+      next = Math.max(0, next);
+      // never land on a track the Tab layout can't render
+      if (!trackHasTab(api.score.tracks[next])) {
+        const fallback = api.score.tracks.findIndex(trackHasTab);
+        if (fallback >= 0) next = fallback;
+      }
+      setVisibleTrack(next);
+      api.renderTracks([api.score.tracks[next]]);
     }
   };
   const refreshTracksRef = useRef(null);
@@ -1415,7 +1433,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
               value={visibleTrack}
               onChange={e => handleVisibleTrack(Number(e.target.value))}
             >
-              {tracks.filter(t => !t.isDrum).map(t => (
+              {tracks.filter(t => t.hasTab).map(t => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>

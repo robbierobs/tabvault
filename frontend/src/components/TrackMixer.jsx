@@ -53,8 +53,9 @@ export default function TrackMixer({
       {/* Tracks */}
       <div className={styles.tracks}>
         {tracks.map(track => {
-          // drums are excluded from tab view (matches the header dropdown)
-          const selectable = !track.isDrum && !!onSelectTrack;
+          // only tracks with tablature can be shown (drums and stringless
+          // keyboard/synth tracks stay audible but not viewable)
+          const selectable = track.hasTab && !!onSelectTrack;
           return (
           <div
             key={track.id}
