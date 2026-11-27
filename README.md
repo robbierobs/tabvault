@@ -44,6 +44,12 @@ TabVault is built on top of **[alphaTab](https://alphatab.net/)** by Daniel Kusc
 
 ---
 
+## Contributors
+
+**[robbierobs](https://github.com/robbierobs)** — v1.7 through v1.16: interactive tab editing, tuning controls, selectable sound banks, live mixing, A/V sync, mobile layout, practice memory and version management.
+
+---
+
 ## Quick Start
 
 ### Docker
