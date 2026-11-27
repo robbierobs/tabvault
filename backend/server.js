@@ -113,6 +113,11 @@ function deleteFile(rel) {
   try { fs.unlinkSync(filePath + '.meta.json'); } catch (e) {}
   try { fs.unlinkSync(filePath + '.versions.json'); } catch (e) {}
   try { fs.rmSync(path.join(LIBRARY_PATH, '.versions', rel), { recursive: true, force: true }); } catch (e) {}
+  // an artist folder under .versions that now holds nothing is dead weight
+  if (rel.includes('/')) {
+    const top = path.join(LIBRARY_PATH, '.versions', rel.split('/')[0]);
+    try { if (fs.existsSync(top) && fs.readdirSync(top).length === 0) fs.rmdirSync(top); } catch (e) {}
+  }
   return true;
 }
 
