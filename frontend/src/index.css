@@ -11,6 +11,7 @@
   --accent: #e8673a;
   --accent2: #c94f25;
   --accent-glow: rgba(232, 103, 58, 0.15);
+  --muted: var(--text2);
   --green: #3acd7e;
   --green-dim: rgba(58, 205, 126, 0.12);
   --yellow: #e8c13a;

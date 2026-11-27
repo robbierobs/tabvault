@@ -35,6 +35,7 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef();
+  const firstLoadRef = useRef(true);
 
   // Artist shelves: 'artist' groups by artist, 'flat' is the plain list
   const [view, setView] = useState('artist');
@@ -97,6 +98,13 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
       if (!res.ok) throw new Error('Failed to load library');
       const data = await res.json();
       setFiles(data);
+      // Artist view opens folded: scan the artist names, then open one.
+      if (firstLoadRef.current) {
+        firstLoadRef.current = false;
+        if (view === 'artist') {
+          setCollapsed(new Set(data.map(f => f.group || f.artist || 'Unfiled')));
+        }
+      }
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -106,6 +114,19 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
   };
 
   useEffect(() => { fetchLibrary(); }, []);
+
+  // Artist view starts with every shelf folded flat — the headers carry the
+  // counts, so you scan the artists first and open the one you want.
+  const shelfNames = () =>
+    Array.from(new Set(files.map(f => f.group || f.artist || 'Unfiled')));
+
+  const switchView = (mode) => {
+    setView(mode);
+    setCollapsed(mode === 'artist' ? new Set(shelfNames()) : new Set());
+  };
+
+  const collapseAll = () => setCollapsed(new Set(shelfNames()));
+  const expandAll = () => setCollapsed(new Set());
 
   const handleUpload = async (fileList) => {
     const gpFiles = Array.from(fileList).filter(f =>
@@ -440,21 +461,26 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
         <span>LIBRARY</span>
         <span className={styles.count}>{files.length}</span>
         <div className={styles.viewToggle}>
-          <button className={`viewBtn ${view === 'artist' ? styles.viewActive : ''}`} onClick={() => setView('artist')}>Artist</button>
-          <button className={`viewBtn ${view === 'flat' ? styles.viewActive : ''}`} onClick={() => setView('flat')}>Flat</button>
+          <button className={`${styles.viewBtn} ${view === 'artist' ? styles.viewActive : ''}`} onClick={() => switchView('artist')} title="Group by artist (folders start collapsed)">Artist</button>
+          <button className={`${styles.viewBtn} ${view === 'flat' ? styles.viewActive : ''}`} onClick={() => switchView('flat')} title="One flat list, every file expanded">Flat</button>
         </div>
       </div>
 
       {view === 'artist' && (
-        <button className={styles.organizeBtn} onClick={handleOrganize} disabled={organizing}>
-          {organizing ? 'Shelving…' : 'Shelve loose files by artist'}
-        </button>
+        <div className={styles.shelfControls}>
+          <button className={styles.organizeBtn} onClick={handleOrganize} disabled={organizing}>
+            {organizing ? 'Shelving…' : 'Shelve loose files by artist'}
+          </button>
+          <button className={styles.foldBtn} onClick={collapsed.size ? expandAll : collapseAll}>
+            {collapsed.size ? 'Expand all' : 'Collapse all'}
+          </button>
+        </div>
       )}
 
       {selected.size > 0 && (
         <div className={styles.bulkBar}>
           <span className={styles.bulkCount}>{selected.size} selected</span>
-          <button className={`bulkDelete ${bulkConfirm ? styles.confirming : ''}`} onClick={handleBulkDelete}>
+          <button className={`${styles.bulkDelete} ${bulkConfirm ? styles.confirming : ''}`} onClick={handleBulkDelete}>
             {bulkConfirm ? `CONFIRM DELETE ${selected.size}` : `DELETE ${selected.size}`}
           </button>
           <button className={styles.bulkClear} onClick={() => { setSelected(new Set()); setBulkConfirm(false); }}>Clear</button>
@@ -470,6 +496,8 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
           </div>
         )}
         {(() => {
+          // A search is a drill-down: ignore the folded state so hits always show.
+          const folded = search ? new Set() : collapsed;
           const shelves = view === 'artist'
             ? Object.values(filtered.reduce((acc, f) => {
                 const g = f.group || f.artist || 'Unfiled';
@@ -489,14 +517,14 @@ export default function Sidebar({ open, onToggle, selectedFile, onFileSelect, me
                     className={styles.groupToggle}
                     onClick={() => setCollapsed(c => { const n = new Set(c); if (n.has(shelf.name)) n.delete(shelf.name); else n.add(shelf.name); return n; })}
                   >
-                    {collapsed.has(shelf.name) ? '▸' : '▾'} {shelf.name}
+                    {folded.has(shelf.name) ? '▸' : '▾'} {shelf.name}
                     <span className={styles.groupCount}>{shelf.files.length}</span>
                   </button>
                   <button className={styles.groupSelectAll} onClick={() => selectShelf(shelf.files)}>
                     {allSelected ? 'Deselect all' : 'Select all'}
                   </button>
                 </div>
-                {!collapsed.has(shelf.name) && shelf.files.map(renderFile)}
+                {!folded.has(shelf.name) && shelf.files.map(renderFile)}
               </div>
             );
           });
