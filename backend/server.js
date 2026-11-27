@@ -696,8 +696,10 @@ app.post('/api/meta/:path(.*)', (req, res) => {
   const { title, artist, album } = req.body;
   // merge into the existing sidecar so extracted fields (tuning, ...) survive
   const meta = getFileMeta(req.params.path);
-  meta.title = title || '';
-  meta.artist = artist || '';
+  // only overwrite fields the client actually sent, so a partial edit (artist
+  // only) does not blank the title/album that were extracted from the tab
+  if (title !== undefined) meta.title = title || '';
+  if (artist !== undefined) meta.artist = artist || '';
   if (album !== undefined) meta.album = album || '';
   const metaPath = filePath + '.meta.json';
   fs.writeFileSync(metaPath, JSON.stringify(meta));
