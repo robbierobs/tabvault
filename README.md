@@ -31,6 +31,10 @@ Load your Guitar Pro files, play them back with MIDI, loop sections with draggab
 - Search across title, artist, and filename
 - Drag-and-drop upload directly in the browser
 - Dark UI
+- **Artist folders** — the library can be nested (`Down/Welcome Gold.gp7`); everything is scanned recursively and `.versions`/`.cache` stay hidden
+- **Shelve by artist** — one button moves flat files into a folder named after the artist (metadata first, folder name as fallback), merging byte-identical duplicates instead of leaving copies behind
+- **Artist shelves** — sidebar groups files by artist with collapsible sections, counts, and a flat-list toggle
+- **Bulk delete** — tick several files (or "Select all" on a shelf), then DELETE with a two-click confirm; removes files, metadata sidecars and stored versions, and prunes an emptied shelf
 
 ---
 
