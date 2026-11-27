@@ -410,3 +410,50 @@
   width: 64px;
   flex: 0 0 auto;
 }
+
+/* ---- Artist shelves + bulk selection ---- */
+.shelf { margin-top: 4px; }
+.groupHeader {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; margin-top: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.groupToggle {
+  background: none; border: none; color: var(--text);
+  font-size: 12px; font-weight: 600; letter-spacing: .04em;
+  cursor: pointer; display: flex; align-items: center; gap: 6px;
+}
+.groupToggle:hover { color: var(--accent); }
+.groupCount { font-size: 10px; color: var(--muted); font-weight: 400; }
+.groupSelectAll {
+  margin-left: auto; background: none; border: 1px solid var(--border);
+  color: var(--muted); font-size: 10px; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+}
+.groupSelectAll:hover { color: var(--text); border-color: var(--accent); }
+.selectCheck { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; flex: none; }
+.selectedRow { background: rgba(96, 165, 250, .12); }
+.viewToggle { display: flex; gap: 4px; margin-left: auto; }
+.viewBtn {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  font-size: 10px; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+}
+.viewBtn.viewActive { color: var(--text); border-color: var(--accent); background: rgba(96,165,250,.12); }
+.organizeBtn {
+  width: 100%; margin: 6px 0; padding: 7px 10px;
+  background: none; border: 1px dashed var(--border); color: var(--muted);
+  font-size: 11px; border-radius: 6px; cursor: pointer;
+}
+.organizeBtn:hover { color: var(--accent); border-color: var(--accent); }
+.bulkBar {
+  display: flex; align-items: center; gap: 8px;
+  margin: 8px 0; padding: 8px 10px;
+  background: rgba(96, 165, 250, .10);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.bulkCount { font-size: 11px; color: var(--muted); }
+.bulkDelete {
+  background: none; border: 1px solid var(--danger, #e05a5a); color: var(--danger, #e05a5a);
+  font-size: 11px; padding: 5px 10px; border-radius: 5px; cursor: pointer;
+}
+.bulkDelete.confirming { background: var(--danger, #e05a5a); color: #fff; border-color: var(--danger, #e05a5a); }
+.bulkClear { background: none; border: none; color: var(--muted); font-size: 10px; cursor: pointer; }

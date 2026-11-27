@@ -40,7 +40,7 @@ export default function App() {
     setSelectedFile(file);
     // an explicitly chosen version (including Original = 0) wins; with no
     // saved choice, open the newest version
-    const saved = file ? loadSongState(file.name)?.version : undefined;
+    const saved = file ? loadSongState(file.path || file.name)?.version : undefined;
     setVersion(file ? (saved ?? file.latestVersion ?? 0) : 0);
     if (isMobile()) setSidebarOpen(false);
   }, []);
@@ -64,7 +64,7 @@ export default function App() {
       <main className={`${styles.main} ${!sidebarOpen || editing ? styles.mainExpanded : ''}`}>
         {selectedFile
           ? <Player
-              key={`${selectedFile.name}::v${version}`}
+              key={`${selectedFile.path || selectedFile.name}::v${version}`}
               file={selectedFile}
               version={version}
               onVersionChange={setVersion}
