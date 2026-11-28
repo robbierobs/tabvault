@@ -31,12 +31,22 @@ Load your Guitar Pro files, play them back with MIDI, loop sections with draggab
 - Search across title, artist, and filename
 - Drag-and-drop upload directly in the browser
 - Dark UI
+- **Artist folders** — the library can be nested (`Down/Welcome Gold.gp7`); everything is scanned recursively and `.versions`/`.cache` stay hidden
+- **Shelve by artist** — one button moves flat files into a folder named after the artist (metadata first, folder name as fallback), merging byte-identical duplicates instead of leaving copies behind
+- **Artist shelves** — sidebar groups files by artist with collapsible sections, counts, and a flat-list toggle
+- **Bulk delete** — tick several files (or "Select all" on a shelf), then DELETE with a two-click confirm; removes files, metadata sidecars and stored versions, and prunes an emptied shelf
 
 ---
 
 ## Attribution
 
 TabVault is built on top of **[alphaTab](https://alphatab.net/)** by Daniel Kuschny and contributors, licensed under the [Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/). alphaTab handles Guitar Pro file parsing, score rendering, and MIDI playback. Without it, this project would not exist.
+
+---
+
+## Contributors
+
+**[robbierobs](https://github.com/robbierobs)** — v1.7 through v1.16: interactive tab editing, tuning controls, selectable sound banks, live mixing, A/V sync, mobile layout, practice memory and version management.
 
 ---
 

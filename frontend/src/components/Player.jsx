@@ -255,7 +255,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     getContainer: () => containerRef.current,
     getPristineBytes: () => bytesRef.current,
     beforeRender: () => { reapplyMixerRef.current = true; },
-    fileName: file.name,
+    fileName: file.path || file.name,
     getVersion: () => version,
     getVisibleTrack: () => visibleTrackRef.current,
     onTracksChanged: (event) => refreshTracksRef.current?.(event),
@@ -263,11 +263,11 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/versions/${encodeURIComponent(file.name)}`)
+    fetch(`/api/versions/${encodeURIComponent(file.path || file.name)}`)
       .then(r => r.ok ? r.json() : { versions: [] })
       .then(d => { if (alive) setVersions(d.versions || []); })
       .catch(() => {});
-    fetch(`/api/draft/${encodeURIComponent(file.name)}/meta`)
+    fetch(`/api/draft/${encodeURIComponent(file.path || file.name)}/meta`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (alive) setDraftMeta(d); })
       .catch(() => {});
@@ -591,7 +591,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
         const artist = score.artist || '';
         setScoreTitle(title);
         setScoreArtist(artist);
-        if (onMetaLoaded) onMetaLoaded(file.name, title, artist);
+        if (onMetaLoaded) onMetaLoaded(file.path || file.name, title, artist);
         setTotalBars(score.masterBars?.length || 0);
         setLoopEnd(score.masterBars?.length || 100);
 
@@ -690,7 +690,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
 
       // Load via raw bytes (rather than URL) so tuning changes can re-parse
       // a pristine copy of the score
-      const url = `/api/file/${encodeURIComponent(file.name)}${version > 0 ? `?v=${version}` : ''}`;
+      const url = `/api/file/${encodeURIComponent(file.path || file.name)}${version > 0 ? `?v=${version}` : ''}`;
       console.log('Loading URL:', url);
       const resp = await fetch(url);
       if (resp.status === 404 && version > 0) {
@@ -922,8 +922,8 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const switchVersion = async (v) => {
     try { await editor.flushDraft(); } catch (e) {}
     try {
-      const st = loadSongState(file.name) || {};
-      saveSongState(file.name, { ...st, version: v });
+      const st = loadSongState(file.path || file.name) || {};
+      saveSongState(file.path || file.name, { ...st, version: v });
     } catch (e) {}
     onVersionChange?.(v);
   };
@@ -934,7 +934,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     if (!entry) return;
     if (!confirm(`Delete version v${entry.v} (${entry.label})? The original file is unaffected.`)) return;
     try {
-      const resp = await fetch(`/api/version/${encodeURIComponent(file.name)}/${entry.v}`, { method: 'DELETE' });
+      const resp = await fetch(`/api/version/${encodeURIComponent(file.path || file.name)}/${entry.v}`, { method: 'DELETE' });
       if (!resp.ok) throw new Error(`Delete failed (${resp.status})`);
       const remaining = versions.filter(x => x.v !== entry.v);
       setVersions(remaining);
@@ -959,7 +959,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
       scaleScoreTempo(score, newTempo);
       const bytes = exportScoreGp(at, score, api.settings);
       const resp = await fetch(
-        `/api/version/${encodeURIComponent(file.name)}?label=${encodeURIComponent(newTempo + ' BPM')}&tempo=${newTempo}`,
+        `/api/version/${encodeURIComponent(file.path || file.name)}?label=${encodeURIComponent(newTempo + ' BPM')}&tempo=${newTempo}`,
         { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }
       );
       if (!resp.ok) {
@@ -1006,7 +1006,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     const api = apiRef.current;
     if (!api) return;
     try {
-      const resp = await fetch(`/api/draft/${encodeURIComponent(file.name)}`);
+      const resp = await fetch(`/api/draft/${encodeURIComponent(file.path || file.name)}`);
       if (!resp.ok) { setDraftMeta(null); return; }
       const draftBytes = new Uint8Array(await resp.arrayBuffer());
       try { api.stop(); } catch (e) {}
@@ -1036,7 +1036,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
     try {
       const bytes = exportScoreGp(at, api.score, api.settings);
       const resp = await fetch(
-        `/api/version/${encodeURIComponent(file.name)}?label=${encodeURIComponent((label || 'edited').trim() || 'edited')}`,
+        `/api/version/${encodeURIComponent(file.path || file.name)}?label=${encodeURIComponent((label || 'edited').trim() || 'edited')}`,
         { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes }
       );
       if (!resp.ok) {
@@ -1045,7 +1045,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
       }
       const entry = await resp.json();
       editor.markSavedAsVersion();
-      try { await fetch(`/api/draft/${encodeURIComponent(file.name)}`, { method: 'DELETE' }); } catch (e) {}
+      try { await fetch(`/api/draft/${encodeURIComponent(file.path || file.name)}`, { method: 'DELETE' }); } catch (e) {}
       switchVersion(entry.v);
     } catch (e) {
       setEditSaveError(e.message || String(e));
@@ -1059,7 +1059,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   const restoredRef = useRef(false);
   const restoreStateRef = useRef(null);
   restoreStateRef.current = (api) => {
-    const saved = loadSongState(file.name);
+    const saved = loadSongState(file.path || file.name);
     if (!saved) { restoredRef.current = true; return; }
     try {
       if (saved.speed && saved.speed !== 100) handleSpeedChange(saved.speed);
@@ -1139,7 +1139,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
   useEffect(() => {
     if (!restoredRef.current) return;
     const id = setTimeout(() => {
-      saveSongState(file.name, {
+      saveSongState(file.path || file.name, {
         v: 1,
         speed,
         loopEnabled,
@@ -1156,7 +1156,7 @@ export default function Player({ file, version = 0, onVersionChange, onMetaLoade
       });
     }, 500);
     return () => clearTimeout(id);
-  }, [speed, loopEnabled, loopStart, loopEnd, rampEnabled, rampStep, rampTarget, tuningTarget, tuningMode, tracks, instrumentOverrides, visibleTrack, file.name, version]);
+  }, [speed, loopEnabled, loopStart, loopEnd, rampEnabled, rampStep, rampTarget, tuningTarget, tuningMode, tracks, instrumentOverrides, visibleTrack, file.path || file.name, version]);
 
   const handleVisibleTrack = (trackId) => {
     const track = apiRef.current?.score?.tracks?.[trackId];
